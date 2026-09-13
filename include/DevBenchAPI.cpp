@@ -28,6 +28,15 @@
 
 #if defined(DEVBENCHAPI_GAME_FALLOUT4)
 #	include <F4SE/F4SE.h>
+// The load-order fallback below calls the raw Win32 loader API. CommonLibF4 deliberately
+// does not pull in Windows.h, so a consumer without it in a PCH would fail to compile.
+#	ifndef WIN32_LEAN_AND_MEAN
+#		define WIN32_LEAN_AND_MEAN
+#	endif
+#	ifndef NOMINMAX
+#		define NOMINMAX
+#	endif
+#	include <Windows.h>
 #else
 #	include <SKSE/SKSE.h>
 #endif
