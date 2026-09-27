@@ -161,10 +161,10 @@ namespace dvb
 			auto*      player = RE::PlayerCharacter::GetSingleton();
 			const json identity = InstanceIdentity();
 			json       out{
-				      { "plugin", "devbench" },
-				      { "version", DEVBENCH_VERSION_STRING },
-				      { "playerLoaded", player != nullptr },
-				      { "frame", game::CurrentFrame() },
+				{ "plugin", "devbench" },
+				{ "version", DEVBENCH_VERSION_STRING },
+				{ "playerLoaded", player != nullptr },
+				{ "frame", game::CurrentFrame() },
 			};
 			// pid/port/exe/vr/game/extender — the identity block is shared with
 			// GET /api/health so both answers can never disagree about who replied.
@@ -179,7 +179,7 @@ namespace dvb
 			if (!player)
 				throw ToolError(409, "inspect scene: no player (no save loaded yet)");
 
-			json out = json::object();
+			json       out = json::object();
 			const auto pos = player->GetPosition();
 			out["position"] = json{ { "x", pos.x }, { "y", pos.y }, { "z", pos.z } };
 
@@ -460,8 +460,9 @@ namespace dvb
 					if (!FindMessageBoxData(menuVA, dataVA, msgOffset))
 						return json{
 							{ "accepted", false },
-							{ "reason", "could not identify the MessageBoxData on this menu (tried +0xF8 and +0xE8) "
-										"-- refusing to call through an unverified layout. See `describe`." },
+							{ "reason",
+								"could not identify the MessageBoxData on this menu (tried +0xF8 and +0xE8) "
+								"-- refusing to call through an unverified layout. See `describe`." },
 						};
 
 					std::uintptr_t cbVA = 0;
@@ -471,12 +472,12 @@ namespace dvb
 							{ "reason", std::format("callback (+0x58) = 0x{:X} is not a polymorphic object -- refusing "
 													"to call it. This dialog may have no callback at all (not every "
 													"message box has one). See `describe`.",
-										   cbVA) },
+											cbVA) },
 						};
 
 					// Validated: vtable slot 1 is operator()(uint8). Keep the callback
 					// alive across the kHide, which can drop the menu's own reference.
-					auto* cb = reinterpret_cast<RE::IMessageBoxCallback*>(cbVA);
+					auto*                                        cb = reinterpret_cast<RE::IMessageBoxCallback*>(cbVA);
 					RE::BSTSmartPointer<RE::IMessageBoxCallback> keepAlive{ cb };
 					if (auto* q = RE::UIMessageQueue::GetSingleton())
 						q->AddMessage(RE::MessageBoxMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide);
