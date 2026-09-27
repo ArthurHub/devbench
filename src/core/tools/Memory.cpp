@@ -167,7 +167,7 @@ namespace dvb::mem
 
 	bool ResolveAddress(std::string_view a_expr, std::uint64_t& a_out, std::string& a_error)
 	{
-		ExprParser p{ a_expr };
+		ExprParser          p{ a_expr };
 		const std::uint64_t v = p.Expr();
 		if (!p.ok) {
 			a_error = p.err;

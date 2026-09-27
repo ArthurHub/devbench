@@ -17,13 +17,13 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 Drop `devbench.dll` in `Data/F4SE/Plugins/`. On first run it writes a self-documenting
 `Data/F4SE/Plugins/devbench/config.json`.
 
-Default ports — distinct per game *and* runtime, so Skyrim and Fallout can be up at the
+Default ports — distinct per game _and_ runtime, so Skyrim and Fallout can be up at the
 same time without either moving:
 
-| | flat | VR |
-| --- | --- | --- |
+|           | flat     | VR       |
+| --------- | -------- | -------- |
 | Fallout 4 | **8930** | **8931** |
-| Skyrim | 8920 | 8921 |
+| Skyrim    | 8920     | 8921     |
 
 If the port is busy the server iterates upward and writes the port it actually bound to
 `Data/F4SE/Plugins/devbench/runtime.json`.
@@ -34,10 +34,10 @@ Install **Visual Studio 2022 or 2026** with the **Desktop development with C++**
 workload (including a Windows SDK), and set `VCPKG_ROOT` to your vcpkg checkout.
 Choose the matching configure and build preset:
 
-| Preset | Toolset | Minimum CMake | Build directory |
-| --- | --- | --- | --- |
-| `fallout4-vs2022` | v143 | 3.23 | `build/vs2022` |
-| `fallout4-vs2026` | v145 | 4.2 | `build/vs2026` |
+| Preset            | Toolset | Minimum CMake | Build directory |
+| ----------------- | ------- | ------------- | --------------- |
+| `fallout4-vs2022` | v143    | 3.23          | `build/vs2022`  |
+| `fallout4-vs2026` | v145    | 4.2           | `build/vs2026`  |
 
 `fallout4` is an alias for `fallout4-vs2026`. Each Visual Studio version has its own
 build directory, so switching presets does not require clearing the cache.
@@ -64,16 +64,16 @@ separated by `;` — the twin of the Skyrim build's `SkyrimPluginTargets`.
 
 Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name>`).
 
-| Tool | What it does |
-| --- | --- |
-| `ping` | Self-test. Returns `{ ok, game, exe, vr }`. |
-| `inspect` | Live game state, on the main thread, returned synchronously. `kind='state'` → `{ plugin, version, playerLoaded, frame, pid, port, exe, vr, game, extender }`. `'health'` → the same identity plus `{ frame, lastTaskFrame, pendingTasks, blocking }`, and it is the **only** kind answered *without* the main thread — so it still replies when a busy or hung main thread would 504. `'ui'` → `{ openMenus, messageBoxOpen, blocking }`, **also** answered without the main thread, for the same reason: `blocking` has to be trustworthy exactly when the game is stuck behind a modal, not just when it's healthy. `'scene'` → `{ position, cell, cellFormId, interior, worldspace?, gameHour, daysPassed }`. `'player'` → `{ formId, level, name }`. |
-| `console` | Runs a console command on the main thread. **Fire-and-forget:** command output is not captured on Fallout yet, and the result says so rather than returning an empty line list. Also reports `blocked` — true if a modal was open when the command was submitted, since many state-machine commands (`coc`, …) silently no-op behind one instead of erroring. |
-| `menu` | Detect and answer in-game menus — mirrors the Skyrim `menu` tool's shape. `action='list'` (default) → `{ openMenus, messageBoxOpen }`. `'describe'` → the active `MessageBoxMenu`'s `{ headerText, bodyText, buttons, modal }`. `'accept'` (`index`, default 0) → answers it by button index and closes it. `'open'`/`'close'` (`name`) → show/hide an engine menu via the UI message queue. |
-| `memory` | Read / resolve / write process memory by address expression. See below. |
-| `log` | `action='tail'` (default) returns the last N lines of a plugin log from `Documents/My Games/Fallout4[VR]/F4SE/`, optional `grep` substring; `action='list'` enumerates them. Any plugin's log, not just devbench's. |
-| `rendertarget` | `action='list'` every render target the engine owns; `'stats'` copies one back and reports `{ nonFinitePct, darkPct, meanLuma, maxChannel }`; `'dump'` also writes a BMP. See below. |
-| `measure` | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook. |
+| Tool           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`         | Self-test. Returns `{ ok, game, exe, vr }`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `inspect`      | Live game state, on the main thread, returned synchronously. `kind='state'` → `{ plugin, version, playerLoaded, frame, pid, port, exe, vr, game, extender }`. `'health'` → the same identity plus `{ frame, lastTaskFrame, pendingTasks, blocking }`, and it is the **only** kind answered _without_ the main thread — so it still replies when a busy or hung main thread would 504. `'ui'` → `{ openMenus, messageBoxOpen, blocking }`, **also** answered without the main thread, for the same reason: `blocking` has to be trustworthy exactly when the game is stuck behind a modal, not just when it's healthy. `'scene'` → `{ position, cell, cellFormId, interior, worldspace?, gameHour, daysPassed }`. `'player'` → `{ formId, level, name }`. |
+| `console`      | Runs a console command on the main thread. **Fire-and-forget:** command output is not captured on Fallout yet, and the result says so rather than returning an empty line list. Also reports `blocked` — true if a modal was open when the command was submitted, since many state-machine commands (`coc`, …) silently no-op behind one instead of erroring.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `menu`         | Detect and answer in-game menus — mirrors the Skyrim `menu` tool's shape. `action='list'` (default) → `{ openMenus, messageBoxOpen }`. `'describe'` → the active `MessageBoxMenu`'s `{ headerText, bodyText, buttons, modal }`. `'accept'` (`index`, default 0) → answers it by button index and closes it. `'open'`/`'close'` (`name`) → show/hide an engine menu via the UI message queue.                                                                                                                                                                                                                                                                                                                                                             |
+| `memory`       | Read / resolve / write process memory by address expression. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `log`          | `action='tail'` (default) returns the last N lines of a plugin log from `Documents/My Games/Fallout4[VR]/F4SE/`, optional `grep` substring; `action='list'` enumerates them. Any plugin's log, not just devbench's.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `rendertarget` | `action='list'` every render target the engine owns; `'stats'` copies one back and reports `{ nonFinitePct, darkPct, meanLuma, maxChannel }`; `'dump'` also writes a BMP. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 `memory`, `log`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
@@ -96,7 +96,7 @@ native) integer-downsamples so a 4K buffer stays openable; sampling is nearest-n
 **not** averaged, because averaging hides the single-pixel artefact you are hunting.
 
 **Read `nonFinitePct` before `darkPct`.** A buffer full of NaN displays as black but reads
-as *bright* to any exponent-threshold test — a NaN's exponent is the largest possible, not
+as _bright_ to any exponent-threshold test — a NaN's exponent is the largest possible, not
 the smallest. In the investigation this came from, 12,000+ readbacks across five sessions
 all reported "0 dark" against a visibly black screen. The two tests are deliberately
 separate calls and a unit test enforces that they stay separate.
@@ -145,7 +145,7 @@ response says `capped: true` when it was — never a silent truncation.
 `cstr` returns `{ value, length, printable }`, with non-printable bytes escaped as `\xNN`.
 That shape exists because of a real bug (fixed 2026-08-17): it used to hand the raw bytes
 to the JSON serialiser, which **refuses invalid UTF-8 and throws**, so probing an address
-that turned out *not* to hold text answered `500` — indistinguishable from the server being
+that turned out _not_ to hold text answered `500` — indistinguishable from the server being
 broken, and silently fatal to any scan that walks unknown memory looking for strings. One
 did exactly that and reported "no text found" everywhere. `printable: false` is now the
 answer to "that is not a string", and it is an answer, not a failure.
@@ -180,7 +180,7 @@ exactly like a no-op.
   its own passes. The ABI is no longer the blocker (it works on Fallout now); the
   instrumentation points still have to be designed.
 - **`rendertarget` covers 2D colour targets only.** No depth/stencil, no cube maps. Target
-  *names* are not reported: Fallout addresses targets by logical id through
+  _names_ are not reported: Fallout addresses targets by logical id through
   RenderTargetManager's remap table, a different index space from the physical slots
   enumerated here, and printing a name that might belong to a different buffer is worse
   than printing none.
@@ -199,19 +199,19 @@ exactly like a no-op.
     this install) works, and `InstallGameEvents` is idempotent so both are called. Same
     species as the Skyrim platform's `BSInputDeviceManager`-at-`kPostLoad` note, which
     was already written down ten lines from the code that assumed the opposite. The
-    open-menu *answers* no longer depend on the sink at all — they read
+    open-menu _answers_ no longer depend on the sink at all — they read
     `RE::UI::menuMap` under the engine's own `GetMenuMapRWLock()`, which is ground truth,
     still needs no main-thread hop, and is correct for menus that opened before devbench
     subscribed. `source` in the result says which one answered, so a `false` can be told
     apart from a blind instrument.
   - **`MessageBoxMenu::currentMessage` is at `+0xF8` on VR, not CommonLibF4's `+0xE8`**
-    (a 0x10 base-class shift). `MessageBoxData`'s *own* layout is byte-identical on both
+    (a 0x10 base-class shift). `MessageBoxData`'s _own_ layout is byte-identical on both
     binaries — `headerText` `+0x18`, `bodyText` `+0x28`, `buttonText` `+0x38` (a
     `BSTArray`: `capacity` at `+0x08`, **`size` at `+0x10`**, since `sizeof(BSTArray)` is
     0x18), `warningContext` `+0x50`, `callback` `+0x58`, `modal` `+0x64`. The wrong
     offset points at a run of small integers with no vtable, and dereferencing it took
     the process down. So `describe`/`accept` try both offsets, identify the winner by
-    *content* (a vtable **and** a `bodyText` that reads as text), report which matched in
+    _content_ (a vtable **and** a `bodyText` that reads as text), report which matched in
     `currentMessageOffset`, and on failure return a hex dump rather than crashing —
     a wrong offset here yields plausible-looking qwords, exactly as `core/gfx/Validate.h`
     warns for the render-target seam.
@@ -266,4 +266,4 @@ who requested the interface and what they registered through it.
 
 Bound to `127.0.0.1`, always, and not configurable. There is no auth, and the bench can
 run console commands and read process memory — correct for a local dev bench, unacceptable
-on a reachable address. Memory *writes* need the two gates above.
+on a reachable address. Memory _writes_ need the two gates above.
