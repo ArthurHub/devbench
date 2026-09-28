@@ -231,9 +231,6 @@ Two layout facts it is built around, worth not rediscovering:
   graph search for `HMDNode` land on the same address. The full scene (1554 nodes) dumps in
   28 ms of main-thread time. Refusals were confirmed live too, including a real
   `bhkNPCollisionObject` named rather than followed. Flat Fallout 4 is not yet run.
-- **`inspect kind='registrants'` misses consumers that use the export route.** A plugin
-  that reaches the C-ABI by `GetProcAddress` (FRIK does) is never recorded as a consumer,
-  so its registrations show up with an empty `consumers` list.
 - **`menu` and the `ui`/`blocking` fields on `inspect` are LIVE-TESTED on Fallout 4 VR
   (2026-08-17).** Detection, `console.blocked`, `describe` and `accept` all confirmed in
   a running game, including the whole recovery: summon the missing-masters modal →
@@ -307,7 +304,11 @@ Two things that bite:
   not have is not a graceful failure.
 
 Registrations are visible at runtime through `inspect kind='registrants'`, which lists both
-who requested the interface and what they registered through it.
+who requested the interface and what they registered through it. Each consumer carries a
+`route`: `message` for the F4SE handshake, named by the extender's sender name, or `export`
+for `DevBench_GetApiFunction`, named by the DLL that called it. The export takes no
+arguments, so the caller is identified from its return address. Before that, a plugin on
+the export route (FRIK is one) registered tools while `registrants` listed no consumer.
 
 `RegisterToolExtension("inspect", "<kind>", …)` adds a kind to the built-in `inspect` instead
 of a new top-level tool: it appears in `inspect`'s schema, in `kind='extensions'`, and

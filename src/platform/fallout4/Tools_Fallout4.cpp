@@ -288,7 +288,7 @@ namespace dvb
 			if (kind == "registrants") {
 				json consumers = json::array();
 				for (const auto& c : HostApi::Consumers())
-					consumers.push_back(json{ { "name", c.name }, { "atEpoch", c.atEpoch }, { "atFrame", c.atFrame } });
+					consumers.push_back(json{ { "name", c.name }, { "route", c.route }, { "atEpoch", c.atEpoch }, { "atFrame", c.atFrame } });
 
 				json registrations = json::array();
 				for (const auto& r : HostApi::Registrations())
@@ -376,7 +376,9 @@ namespace dvb
 				"interior, worldspace?, gameHour, daysPassed } (worldspace is absent, not empty, for "
 				"an interior cell); 'player' → { formId, level, name }; "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
-				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
+				"through it { consumers:[{name,route,atEpoch,atFrame}] (route: message = extender "
+				"handshake, name is the sender; export = DevBench_GetApiFunction, name is the calling "
+				"DLL), registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — side "
 				"by side, not joined, since the C-ABI has no per-call caller identity; "
 				"'extensions' → the kinds other plugins added via the C-ABI RegisterToolExtension, "
