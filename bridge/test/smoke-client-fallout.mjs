@@ -7,11 +7,13 @@
 // One-shot: tools/list, then inspect + nodes calls. --watch keeps ONE MCP session open
 // and polls `inspect kind=health` every 2 s, printing each up/down transition. Quit and
 // relaunch the game while it runs: the session should report "game not running" and then
-// answer again, without reconnecting. That is the whole reason the bridge exists.
+// answer again, without reconnecting. That is the whole reason the bridge exists. Start it
+// with the game down to see mod tools (FRIK's `frik`) arrive by tools/list_changed.
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -30,6 +32,14 @@ const transport = new StdioClientTransport({
   ],
 });
 const client = new Client({ name: "smoke-test-fallout", version: "0.0.0" });
+// Re-list on the bridge's push, as a real client does, and say what arrived: a session
+// that started while the game was down should gain the mod tools here.
+client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  console.log(
+    `${new Date().toLocaleTimeString()}  tools/list_changed -> ${names.length} tools: ${names.join(", ")}`,
+  );
+});
 await client.connect(transport);
 
 // A tool result's text is devbench's JSON (or the bridge's { ok:false, reason }).
