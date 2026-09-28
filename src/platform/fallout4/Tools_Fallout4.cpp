@@ -2,6 +2,7 @@
 
 #include "GameEvents_Fallout4.h"
 
+#include "core/ConsoleCaptureLogic.h"
 #include "core/EventBus.h"
 #include "core/GameState.h"
 #include "core/HostApi.h"
@@ -16,6 +17,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <optional>
 
 // Fallout 4 / Fallout 4 VR game tools.
 //
@@ -396,37 +399,178 @@ namespace dvb
 			return inspect;
 		}
 
+		// ---- console output --------------------------------------------------------
+		//
+		// Every console print ends in ConsoleLog::AddString, which appends to
+		// ConsoleLog::buffer under the log's lock. When the buffer goes from empty to
+		// non-empty it also queues a UI message, and the Console menu, once it has ever
+		// been created, drains the buffer into its history when that message is
+		// processed. That happens in the UI pass, never inside a task.
+		//
+		// Console::ExecuteCommand does not run the command: it echoes it, then queues it
+		// for the engine to run on a later frame, by which time a created Console menu may
+		// already have drained the output. So a capture compiles and runs the command
+		// itself (Script::CompileAndRun with the console's compiler, against the selected
+		// reference, as MentatsF4SE's ExecuteCommand does), and reads the buffer before and
+		// after in ONE main-thread task. Its output is then in the buffer whether or not the
+		// console exists: no hook, no marker commands, no polling.
+		//
+		// Measured live on FO4VR (2026-09-28): before the console was first opened the
+		// buffer held every line printed since load; opening it dropped the size to 0;
+		// with the menu created, open or closed, it read 0 again right after a command.
+		// A command through ExecuteCommand put only its echo in the buffer within the
+		// task; its output arrived later. VR addresses, all from the VR address library
+		// and disassembled live: AddString 0x12E3F10 (also Modding-Reference F4VR/
+		// Analysis/gold/f4sevr_0_6_21_RE_REFERENCE.md, Console) appends to [this+0x08]
+		// and drops any string that would take the buffer to 0xFFFE bytes; ConsoleLog's
+		// singleton is 0x59429C8, F4SEVR's g_console (Analysis/silver/
+		// FO4VRTools_RE_REFERENCE.md); ExecuteCommand 0x12DC460 copies each command into
+		// a queue slot; CompileAndRun is 0x4CBA50.
+
+		constexpr std::size_t kConsoleBufferLimit = 0xFFFE;
+		// Past this, a long line may already be dropped by AddString's limit.
+		constexpr std::size_t kConsoleBufferNearlyFull = 0xF000;
+		constexpr std::size_t kConsoleDefaultLines = 200;
+		constexpr std::size_t kConsoleMaxLines = 5000;
+
+		// The console buffer's text, or nullopt if it cannot be read. Main thread. Read
+		// through SafeRead since the log's lock is not taken: a print from another thread
+		// can race this, and a torn read must be a failed capture, not a crash.
+		std::optional<std::string> ReadConsoleBuffer()
+		{
+			auto* log = RE::ConsoleLog::GetSingleton();
+			if (!log)
+				return std::nullopt;
+			// BSStringT<char> is { char* data; uint16 size; uint16 capacity }, and a size of
+			// 0xFFFF means "not tracked, use strlen".
+			const auto     at = reinterpret_cast<std::uintptr_t>(&log->buffer);
+			std::uintptr_t data = 0;
+			std::uint16_t  size = 0;
+			std::uint16_t  capacity = 0;
+			if (!ReadQWord(at, data) ||
+				!mem::SafeRead(reinterpret_cast<const void*>(at + 8), &size, sizeof(size)) ||
+				!mem::SafeRead(reinterpret_cast<const void*>(at + 10), &capacity, sizeof(capacity)))
+				return std::nullopt;
+			if (!data || size == 0)
+				return std::string{};  // never allocated, or drained
+			const std::size_t length = size == 0xFFFF ? capacity : size;
+			std::string       text(length, '\0');
+			if (!mem::SafeRead(reinterpret_cast<const void*>(data), text.data(), length))
+				return std::nullopt;
+			if (size == 0xFFFF)
+				text.resize(::strnlen(text.data(), length));
+			return text;
+		}
+
+		// The console's selected reference (prid, or a click), which a command without an
+		// explicit `ref.` runs against. CommonLibF4 has only its flat-OG id, 170742, which
+		// the VR address library also maps (0x5B3CC50); next-gen has no such id and
+		// resolving a missing one is a CTD, so there it is left unset.
+		RE::NiPointer<RE::TESObjectREFR> ConsolePickRef()
+		{
+			if (REL::Module::IsNG())
+				return nullptr;
+			return RE::Console::GetPickRef().get();
+		}
+
+		// Compiles and runs one console command now instead of on a later frame. Main
+		// thread. False if it did not compile (the reason is printed).
+		bool RunConsoleCommandNow(const std::string& a_command)
+		{
+			auto* factory = RE::ConcreteFormFactory<RE::Script>::GetFormFactory();
+			auto* script = factory ? factory->Create() : nullptr;
+			if (!script)
+				throw ToolError(500, "console: the engine did not create a Script form to run the command");
+			const auto         target = ConsolePickRef();
+			RE::ScriptCompiler compiler;
+			script->SetText(a_command);
+			script->CompileAndRun(&compiler, RE::COMPILER_NAME::kSystemWindow, target.get());
+			const bool compiled = script->header.isCompiled;
+			delete script;  // the engine's own deleting destructor, through the vtable
+			return compiled;
+		}
+
 		json ConsoleHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string command = a_args.value("command", std::string{});
 			if (command.empty())
 				throw ToolError(400, "console: 'command' is required");
+			const bool capture = a_args.value("capture", true);
+			const auto maxLines = static_cast<std::size_t>(std::clamp<std::int64_t>(
+				a_args.value("maxLines", static_cast<std::int64_t>(kConsoleDefaultLines)), 1, kConsoleMaxLines));
 
 			// Checked BEFORE running: a modal open at submission time is what makes a
-			// state-machine command (coc, ...) silently no-op, and fire-and-forget
-			// means this is the only chance to say so.
+			// state-machine command (coc, ...) silently no-op without printing anything.
 			const bool blocked = IsMessageBoxOpen();
 
-			// Fire-and-forget on purpose. Fallout 4's console has no ConsoleLog fencing
-			// equivalent wired up here yet, so promising a captured result would be a
-			// promise this cannot keep — say plainly that the output is not returned
-			// rather than returning an empty 'lines' array that reads like "no output".
-			MainThread::RunAndWait([command]() -> json {
-				RE::Console::ExecuteCommand(command.c_str());
-				return json{ { "queued", true } };
-			});
-			json out{
-				{ "executed", true },
-				{ "command", command },
-				{ "note", "output is not captured on Fallout 4 yet — see the `log` tool, or read the in-game console" },
-				{ "blocked", blocked },
-			};
+			json out;
+			if (!capture) {
+				MainThread::RunAndWait([command]() -> json {
+					RE::Console::ExecuteCommand(command.c_str());
+					return true;
+				});
+				out = json{
+					{ "executed", true },
+					{ "command", command },
+					{ "captured", false },
+					{ "note", "capture=false: queued exactly as if typed, so it runs on a later frame and its output goes to the in-game console" },
+				};
+			} else {
+				// The console runs a ForEachRef[...] block itself, before any script sees it.
+				constexpr std::string_view kForEachRef = "foreachref[";
+				if (command.size() >= kForEachRef.size() &&
+					std::ranges::equal(std::string_view(command).substr(0, kForEachRef.size()), kForEachRef,
+						[](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; }))
+					throw ToolError(400, "console: a ForEachRef[...] block only runs through the console's queue; pass capture=false");
+				const auto commands = ConsoleLogCapture::SplitConsoleCommands(command);
+				if (commands.empty())
+					throw ToolError(400, "console: 'command' has no command in it");
+
+				// One task for the baseline, the commands and the read: the Console menu can
+				// only drain the buffer after this task returns.
+				out = MainThread::RunAndWait([command, commands, maxLines]() -> json {
+					// The echo ExecuteCommand would print, so the console history still shows
+					// what ran. Before the baseline, so it is not part of the output.
+					if (auto* log = RE::ConsoleLog::GetSingleton())
+						log->AddString((command + "\n").c_str());
+					const auto before = ReadConsoleBuffer();
+					bool       compiled = true;
+					for (const auto& one : commands)
+						compiled = RunConsoleCommandNow(one) && compiled;
+					const auto after = ReadConsoleBuffer();
+
+					json r{ { "executed", true }, { "command", command }, { "compiled", compiled } };
+					if (!before || !after) {
+						r["captured"] = false;
+						r["note"] = "the console buffer could not be read, so the output was not captured; read the in-game console";
+						return r;
+					}
+					const auto appended = ConsoleLogCapture::AppendedLines(*after, before->size(), maxLines);
+					r["captured"] = true;
+					r["count"] = appended.lines.size();
+					r["lines"] = appended.lines;
+					if (appended.omitted)
+						r["omitted"] = appended.omitted;
+					if (appended.drained)
+						r["drained"] = true;
+					if (after->size() >= kConsoleBufferNearlyFull) {
+						r["bufferNearlyFull"] = true;
+						r["note"] = std::format(
+							"the console buffer holds {} of its {} bytes, and the engine silently drops any line that "
+							"would pass the limit, so output may be missing. It fills only until the Console menu is "
+							"first created: menu action='open' then 'close' with name='Console' drains it for good.",
+							after->size(), kConsoleBufferLimit);
+					}
+					return r;
+				});
+			}
+			out["blocked"] = blocked;
 			if (blocked) {
 				out["blockedNote"] =
 					"a modal (MessageBoxMenu) was open when this command was submitted -- many console "
-					"commands (e.g. coc) silently no-op behind one rather than erroring. The command above "
-					"still ran (fire-and-forget), so it may have done nothing. Use inspect kind='ui' or "
-					"menu action='describe' to read the modal, and menu action='accept' to answer it.";
+					"commands (e.g. coc) silently no-op behind one rather than erroring, so it may have "
+					"done nothing. Use inspect kind='ui' or menu action='describe' to read the modal, and "
+					"menu action='accept' to answer it.";
 			}
 			return out;
 		}
@@ -632,18 +776,31 @@ namespace dvb
 			ToolDescriptor console;
 			console.name = "console";
 			console.description =
-				"Run a Fallout 4 console command on the main thread (RE::Console::ExecuteCommand). "
-				"Fire-and-forget: the command's console OUTPUT is not captured on Fallout 4 yet, so "
-				"the result says { executed, command, note, blocked } and never a hollow empty line "
-				"list. `blocked` is true if a modal (MessageBoxMenu) was open at submission time — "
-				"many state-machine commands (coc, ...) silently no-op behind one rather than erroring, "
-				"so this is the one warning available; see `menu` to describe/dismiss it. "
-				"Use it for state changes (tgm, coc, player.additem, setgs); to read something back, "
-				"prefer `inspect`, or `memory` if the value is only reachable in the engine.";
+				"Run a Fallout 4 console command and return what it printed: { executed, command, "
+				"compiled, captured, count, lines, blocked }. By default (capture=true) the command is "
+				"compiled and run right away on the main thread, against the console's selected "
+				"reference, and its output is read from the engine's console buffer in that same task, "
+				"so `lines` holds this command's output only, complete even when it prints many lines "
+				"at once (player.showinventory, sqv), with blank lines dropped; one call, no separate "
+				"read. At most "
+				"maxLines (default 200, max 5000), the most recent; `omitted` counts the rest. "
+				"compiled=false means the command did not compile (the reason is in `lines`); "
+				"captured=true with no lines means it printed nothing; captured=false means the buffer "
+				"could not be read. `bufferNearlyFull` means lines may have been dropped by the engine's "
+				"64 KB limit, which only applies before the Console menu is first opened (the note says "
+				"how to clear it). Several commands separated by ';' run in order, as in the console; "
+				"`compiled` is false if any did not compile. A ForEachRef[...] block needs capture=false, "
+				"which queues the line exactly as if typed; it then runs on a later frame and returns no "
+				"output. `blocked` is true if a "
+				"modal (MessageBoxMenu) was open at submission time — many state-machine commands (coc, "
+				"...) silently no-op behind one rather than erroring; see `menu` to describe/dismiss it. "
+				"Non-UTF-8 bytes come back escaped as \\xNN.";
 			console.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "command", json{ { "type", "string" }, { "description", "the console command, exactly as you would type it" } } } } },
+									{ "command", json{ { "type", "string" }, { "description", "the console command, exactly as you would type it" } } },
+									{ "capture", json{ { "type", "boolean" }, { "description", "default true: run it now and return its output; false queues it as if typed, with no output" } } },
+									{ "maxLines", json{ { "type", "integer" }, { "description", "most recent output lines to return, default 200, max 5000" } } } } },
 				{ "required", json::array({ "command" }) }
 			};
 			a_registry.Register(std::move(console), &ConsoleHandler);
