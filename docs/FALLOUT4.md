@@ -8,9 +8,11 @@ The same DLL serves **Fallout 4** and **Fallout 4 VR**. It is the Fallout platfo
 [devbench](../README.md); the tool surface, the transports, and the config file are shared
 with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit together.
 
-> **Status: builds, not yet run in-game.** The plugin compiles and exports the F4SE entry
-> points; no endpoint has answered a live request yet. Treat the endpoint list below as
-> the intended contract, not as a tested one.
+> **Status: runs on Fallout 4 VR; flat Fallout 4 not yet run.** On FO4VR the server starts,
+> the bridge keeps one session across game restarts, and `console`, `menu`, `inspect`,
+> `nodes` and `memory` have answered live requests. Two mods, True Scopes and FRIK, register
+> their own tools through the C-ABI. `rendertarget`, `measure` and `log` have no recorded
+> live run yet. Flat Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
 
@@ -283,7 +285,8 @@ Two layout facts it is built around, worth not rediscovering:
   `inspect kind='health'` its hung-vs-busy discrimination and nothing else.
 - ~~**The cross-plugin C-ABI (`DevBenchAPI.h`) is Skyrim-typed.**~~ **Closed** — see
   "Registering your own tools" below. Builds on both platforms and is compile-checked by
-  the extender-free unit-test target; **no live consumer has exercised it on Fallout yet.**
+  the extender-free unit-test target. Live on FO4VR, True Scopes (2026-08-26) and FRIK
+  (2026-09-28) both register tools through it, over the `DevBench_GetApiFunction` export.
 
 ## Registering your own tools
 
@@ -327,6 +330,13 @@ who requested the interface and what they registered through it. Each consumer c
 for `DevBench_GetApiFunction`, named by the DLL that called it. The export takes no
 arguments, so the caller is identified from its return address. Before that, a plugin on
 the export route (FRIK is one) registered tools while `registrants` listed no consumer.
+
+devbench registers one tool through the same interface itself: `devbench.selftest`, which
+echoes its arguments, so the C-ABI round trip can be checked with no consumer mod
+installed. It used to be named `ping`, and since the C-ABI replaces a tool of the same
+name, it took over the built-in `ping` on every game. The same applies to your tools: a
+name that matches a built-in replaces it, and `registrants` marks that registration
+`replaced`.
 
 `RegisterToolExtension("inspect", "<kind>", …)` adds a kind to the built-in `inspect` instead
 of a new top-level tool: it appears in `inspect`'s schema, in `kind='extensions'`, and

@@ -232,8 +232,9 @@ that claims less:
   `devbench.dll` exports `F4SEPlugin_Query` / `F4SEPlugin_Load`.
 - ✅ **The format decoder is unit-tested** — 8 cases, all passing, including the NaN
   blind-spot regression.
-- ❌ **The Fallout plugin has not been loaded in the game.** No endpoint has answered a
-  live request.
+- ✅ **The Fallout plugin runs in Fallout 4 VR.** Its endpoints answer live requests, and
+  mods register tools through the C-ABI; [FALLOUT4.md](FALLOUT4.md) lists what has been
+  confirmed. Flat Fallout 4 has not been loaded yet.
 - ❌ **The Skyrim xmake target has not been built since the move.** The change is
   mechanical — recursive glob (unchanged), two `add_includedirs`, the PCH path, the
   `RecordingsMenu` paths, and `remove_files("src/platform/fallout4/**.cpp")` — but

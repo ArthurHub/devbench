@@ -44,6 +44,28 @@ TEST_CASE("HostApi records a message-route request with its sender and route")
 	CHECK(c.route == "message");
 }
 
+TEST_CASE("HostApi's self-test tool leaves the built-in ping in place")
+{
+	// Init runs after the built-in tools are registered. The self-test used to register
+	// as "ping" and replace the core one, so every game answered { pong, echo }.
+	dvb::ToolRegistry   registry;
+	dvb::EventBus       events;
+	dvb::ToolDescriptor ping;
+	ping.name = "ping";
+	ping.description = "built-in";
+	registry.Register(std::move(ping), [](const dvb::json&, const dvb::ToolContext&) { return dvb::json{ { "ok", true } }; });
+
+	dvb::HostApi::Init(registry, events, 12200);
+
+	CHECK(registry.Describe("ping")->description == "built-in");
+	const auto builtin = registry.Invoke("ping", dvb::json::object(), {});
+	CHECK(builtin.value["ok"] == true);
+	const auto selftest = registry.Invoke("devbench.selftest", dvb::json{ { "foo", 7 } }, {});
+	CHECK(selftest.ok);
+	CHECK(selftest.value["pong"] == true);
+	CHECK(selftest.value["echo"]["foo"] == 7);
+}
+
 TEST_CASE("HostApi rejects time-scale requests when the platform has no implementation")
 {
 	dvb::ToolRegistry registry;
