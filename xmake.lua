@@ -174,6 +174,7 @@ add_files("tests/*.cpp")
 add_files("src/core/ToolRegistry.cpp") -- exercised directly; pure logic, no game deps
 add_files("src/core/Ssim.cpp") -- exercised directly; pure logic, no game deps
 add_files("src/core/gfx/Format.cpp") -- the DXGI decoder + the NaN blind-spot regression
+add_files("src/core/tools/Memory.cpp") -- SEH-guarded reads + the RTTI identity check nodes relies on
 add_files("src/core/Host.cpp", "src/core/Log.cpp") -- the platform seam, stubbed by tests/pch.h
 -- Also compiled here as an INVARIANT CHECK (beyond what HostApi_test exercises):
 -- this target links neither SKSE nor F4SE, so if HostApi.cpp (the cross-plugin C-ABI

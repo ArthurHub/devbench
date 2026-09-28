@@ -4,13 +4,18 @@
 
 #include "core/EventBus.h"
 #include "core/GameState.h"
+#include "core/HostApi.h"
 #include "core/Json.h"
 #include "core/MainThread.h"
 #include "core/Server.h"
+#include "core/ToolExtensions.h"
 #include "core/ToolRegistry.h"
 #include "core/tools/Memory.h"
 
 #include "Version.h"
+
+#include <algorithm>
+#include <cctype>
 
 // Fallout 4 / Fallout 4 VR game tools.
 //
@@ -218,7 +223,7 @@ namespace dvb
 			return out;
 		}
 
-		json InspectHandler(const json& a_args, const ToolContext&)
+		json InspectHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string kind = a_args.value("kind", std::string("state"));
 
@@ -266,15 +271,127 @@ namespace dvb
 				};
 			}
 
-			return MainThread::RunAndWait([kind]() -> json {
-				if (kind == "state")
-					return StateSnapshot();
-				if (kind == "scene")
-					return SceneSnapshot();
-				if (kind == "player")
+			if (kind == "state" || kind == "scene" || kind == "player") {
+				return MainThread::RunAndWait([kind]() -> json {
+					if (kind == "state")
+						return StateSnapshot();
+					if (kind == "scene")
+						return SceneSnapshot();
 					return PlayerSnapshot();
-				throw ToolError(400, "inspect: unknown kind '" + kind + "' (state|health|ui|scene|player)");
-			});
+				});
+			}
+
+			// 'registrants': who requested the C-ABI interface and what they registered
+			// through it — the same ledger and the same shape as the Skyrim kind. The two
+			// lists are side by side, not joined: the C-ABI has no per-call caller
+			// identity, so pairing them by plugin name would be a guess.
+			if (kind == "registrants") {
+				json consumers = json::array();
+				for (const auto& c : HostApi::Consumers())
+					consumers.push_back(json{ { "name", c.name }, { "atEpoch", c.atEpoch }, { "atFrame", c.atFrame } });
+
+				json registrations = json::array();
+				for (const auto& r : HostApi::Registrations())
+					registrations.push_back(json{
+						{ "kind", r.kind }, { "name", r.name },
+						{ "atEpoch", r.atEpoch }, { "atFrame", r.atFrame }, { "replaced", r.replaced } });
+
+				json capabilities = json::object();
+				for (const char* base : { "capture", "inspect", "menu" }) {
+					json keys = json::array();
+					for (const auto& k : ToolExtensions::Keys(base))
+						keys.push_back(k);
+					capabilities[base] = std::move(keys);
+				}
+				return json{
+					{ "consumers", std::move(consumers) },
+					{ "registrations", std::move(registrations) },
+					{ "capabilities", std::move(capabilities) },
+				};
+			}
+
+			if (kind == "extensions") {
+				json out = json::array();
+				for (const auto& k : ToolExtensions::Keys("inspect")) {
+					json e{ { "kind", k } };
+					if (auto entry = ToolExtensions::Find("inspect", k))
+						e["descriptor"] = entry->descriptor;
+					out.push_back(std::move(e));
+				}
+				return json{ { "extensions", std::move(out) } };
+			}
+
+			// A kind another plugin registered (C-ABI RegisterToolExtension "inspect").
+			// Its handler runs here, on the listener thread — the C-ABI contract is that
+			// a consumer marshals to the main thread itself, same as for a whole tool.
+			if (auto entry = ToolExtensions::Find("inspect", kind))
+				return entry->handler(a_args, a_ctx);
+
+			throw ToolError(400, "inspect: unknown kind '" + kind +
+									 "' (state|health|ui|scene|player|registrants|extensions, or a registered kind -- see kind='extensions')");
+		}
+
+		// " Registered (mod) kinds: a — desc; b." for the descriptor, so a kind another
+		// plugin added is discoverable from tools/list and not only from kind='extensions'.
+		std::string RegisteredInspectKinds()
+		{
+			const auto keys = ToolExtensions::Keys("inspect");
+			if (keys.empty())
+				return {};
+			std::string s = " Registered (mod) kinds: ";
+			for (std::size_t i = 0; i < keys.size(); ++i) {
+				std::string desc;
+				if (auto e = ToolExtensions::Find("inspect", keys[i]))
+					desc = e->descriptor.value("description", std::string{});
+				s += keys[i];
+				if (!desc.empty())
+					s += " — " + desc;
+				s += (i + 1 < keys.size()) ? "; " : ".";
+			}
+			return s;
+		}
+
+		// Rebuilt, not frozen at startup, so a registered kind lands in the enum and the
+		// description — the change listener in RegisterGameTools re-registers it.
+		ToolDescriptor BuildInspectDescriptor()
+		{
+			ToolDescriptor inspect;
+			inspect.name = "inspect";
+			inspect.description =
+				"Read live game state. Runs on the main thread and returns the value synchronously "
+				"(a 504 means the main thread did not service the task — the message says whether "
+				"it was busy or hung). kinds: "
+				"'state' → { plugin, version, playerLoaded, frame, pid, port, exe, vr, game, extender } "
+				"— the identity fields name the instance that answered, so a session attached to "
+				"several running games (Skyrim on 8920, Fallout on 8930) can confirm which one it "
+				"reached; 'health' → the same identity plus { frame, lastTaskFrame, pendingTasks }, "
+				"and it is the ONLY kind answered WITHOUT the main thread, so it still replies while "
+				"a busy or hung main thread would 504, plus { blocking } — is a modal open right now "
+				"(see 'ui'); 'ui' → { openMenus, messageBoxOpen, blocking, source, menuEvents }, ALSO "
+				"answered without the main thread (same reason as 'health' — it has to be trustworthy "
+				"exactly when the game is stuck behind a modal). `source` is 'menuMap' when the answer "
+				"came from the engine's own menu map (ground truth) and 'none' when nothing is tracking "
+				"— in which case `blocking:false` means nothing, so check it before believing a false; "
+				"'scene' → { position, cell, cellFormId, "
+				"interior, worldspace?, gameHour, daysPassed } (worldspace is absent, not empty, for "
+				"an interior cell); 'player' → { formId, level, name }; "
+				"'registrants' → who has requested the C-ABI interface and what they registered "
+				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
+				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — side "
+				"by side, not joined, since the C-ABI has no per-call caller identity; "
+				"'extensions' → the kinds other plugins added via the C-ABI RegisterToolExtension, "
+				"with their descriptors, and kind=<registered> dispatches to that plugin's handler.";
+			inspect.description += RegisteredInspectKinds();
+			json kinds = json::array({ "state", "health", "ui", "scene", "player", "registrants", "extensions" });
+			for (const auto& k : ToolExtensions::Keys("inspect"))
+				kinds.push_back(k);
+			inspect.inputSchema = json{
+				{ "type", "object" },
+				{ "properties", json{
+									{ "kind", json{ { "type", "string" }, { "enum", std::move(kinds) }, { "description", "default 'state'; or a registered mod kind (see kind='extensions')" } } } } }
+			};
+			inspect.readOnly = true;
+			return inspect;
 		}
 
 		json ConsoleHandler(const json& a_args, const ToolContext&)
@@ -496,35 +613,18 @@ namespace dvb
 
 	void RegisterGameTools(ToolRegistry& a_registry, EventBus&)
 	{
-		{
-			ToolDescriptor inspect;
-			inspect.name = "inspect";
-			inspect.description =
-				"Read live game state. Runs on the main thread and returns the value synchronously "
-				"(a 504 means the main thread did not service the task — the message says whether "
-				"it was busy or hung). kinds: "
-				"'state' → { plugin, version, playerLoaded, frame, pid, port, exe, vr, game, extender } "
-				"— the identity fields name the instance that answered, so a session attached to "
-				"several running games (Skyrim on 8920, Fallout on 8930) can confirm which one it "
-				"reached; 'health' → the same identity plus { frame, lastTaskFrame, pendingTasks }, "
-				"and it is the ONLY kind answered WITHOUT the main thread, so it still replies while "
-				"a busy or hung main thread would 504, plus { blocking } — is a modal open right now "
-				"(see 'ui'); 'ui' → { openMenus, messageBoxOpen, blocking, source, menuEvents }, ALSO "
-				"answered without the main thread (same reason as 'health' — it has to be trustworthy "
-				"exactly when the game is stuck behind a modal). `source` is 'menuMap' when the answer "
-				"came from the engine's own menu map (ground truth) and 'none' when nothing is tracking "
-				"— in which case `blocking:false` means nothing, so check it before believing a false; "
-				"'scene' → { position, cell, cellFormId, "
-				"interior, worldspace?, gameHour, daysPassed } (worldspace is absent, not empty, for "
-				"an interior cell); 'player' → { formId, level, name }.";
-			inspect.inputSchema = json{
-				{ "type", "object" },
-				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "health", "ui", "scene", "player" }) }, { "description", "default 'state'" } } } } }
-			};
-			inspect.readOnly = true;
-			a_registry.Register(std::move(inspect), &InspectHandler);
-		}
+		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
+
+		// When a plugin registers an inspect kind, rebuild the descriptor so the kind is in
+		// tools/list from the next call (re-registering also fires tools/list_changed).
+		// Only `inspect` routes extensions on Fallout so far; `menu` and `capture` keys
+		// are still recorded (and listed by kind='registrants') but not dispatched.
+		ToolExtensions::SetChangeListener([reg = &a_registry](const std::string& a_baseTool) {
+			std::string base = a_baseTool;
+			std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			if (base == "inspect")
+				reg->Register(BuildInspectDescriptor(), &InspectHandler);
+		});
 
 		{
 			ToolDescriptor console;
@@ -574,5 +674,7 @@ namespace dvb
 			};
 			a_registry.Register(std::move(menu), &MenuHandler);
 		}
+
+		RegisterNodeTools(a_registry);
 	}
 }
