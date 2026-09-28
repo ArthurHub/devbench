@@ -244,8 +244,9 @@ that claims less:
   plausibility-gated and returns `-1` rather than a garbage number when the gate fails;
   `-1` degrades `/api/health` to "no frame signal" instead of misreporting one. The
   flat-rim path is address-library backed and fine.
-- ⚠️ **Fallout `console` output capture** is not implemented (Skyrim's fencing trick has no
-  wired-up equivalent yet). The tool says so in its own description.
+- ✅ **Fallout `console` returns its output.** It runs the command and reads
+  `ConsoleLog`'s buffer in one main-thread task, with no fencing; see
+  [FALLOUT4.md](FALLOUT4.md).
 - ⚠️ **The renderer struct offsets have not been confirmed against a running game.** They
   agree from two independent directions (CommonLibF4's flat-rim layout, and a live
   x64dbg measurement on VR — `0x10 + 0x0A58 + 0x10 == 0xA78` exactly), and
