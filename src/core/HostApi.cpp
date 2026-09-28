@@ -195,11 +195,14 @@ namespace dvb::HostApi
 
 		// Self-test: register a trivial tool THROUGH the public interface, proving the
 		// C-callback + JSON round-trip path end to end without a separate consumer.
+		// Its own dotted name, like any mod tool: Init runs after the built-in tools are
+		// registered and Register replaces by name, so this used to be called "ping" and
+		// silently took the core `ping` ({ ok, game, exe, vr }) over on every game.
 		void RegisterSelfTest()
 		{
 			static constexpr const char* desc =
 				R"({"description":"devbench C-ABI self-test; echoes its args.","inputSchema":{"type":"object"},"readOnly":true})";
-			g_interface.RegisterTool("ping", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
+			g_interface.RegisterTool("devbench.selftest", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
 					const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
 					const std::string out = R"({"pong":true,"echo":)" + args + "}";
 					a_write(a_sink, out.c_str()); }, nullptr);
