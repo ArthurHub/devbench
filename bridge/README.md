@@ -21,6 +21,20 @@ its very first connection either way. When the game isn't up, `tools/call` retur
 clean `{ok:false, reason:"game not running"}` instead of killing your MCP session —
 restart the game and keep calling, no reconnect.
 
+Tools a mod registers (FRIK's `frik`, …) are not in that baked-in list: they exist only
+while the game runs, and they register after devbench is already up. So the bridge
+compares the live list with the one it last gave the client, and sends
+`tools/list_changed` when they differ. A client that honors it re-lists mid-session. While
+the game is down the bridge sends nothing, so a restart does not make tools vanish and
+reappear. (devbench's own `/mcp` pushes the same notification, but the bridge talks REST,
+where there is no push to forward.)
+
+The check is adaptive, because mods register while the game starts up: every 5 s while the
+game is down (to catch a launch) and for the first 2 minutes of each game process, then
+every 60 s. Each check asks `/api/health` for the game's pid first, so a restart that fell
+between two slow checks still restarts the fast window. Both endpoints are answered off the
+game's main thread.
+
 Each list is regenerated from a live devbench with
 `node scripts/sync-tools-fallback.mjs [url]` (default `http://127.0.0.1:8920`); the script
 asks the instance which game it is and writes that game's file, so a wrong port cannot
@@ -88,5 +102,6 @@ npm run compile    # bun build --compile → dist/devbench-bridge.exe (standalon
 `test/` holds a throwaway mock devbench server and MCP-client smoke tests for exercising
 the proxy logic — not part of the shipped bridge. `test/smoke-client-fallout.mjs` is
 portable: `node test/smoke-client-fallout.mjs --game fo4vr` makes one round of calls, and
-`--watch 120` keeps one MCP session open and prints each up/down transition while you
-quit and relaunch the game.
+`--watch 120` keeps one MCP session open and prints each up/down transition and each
+`tools/list_changed` while you quit and relaunch the game. `test/list-changed.mjs` needs no
+game: it runs the bridge against a mock that comes up mid-session and checks the push.
