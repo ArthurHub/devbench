@@ -7,9 +7,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
-import { isSupportedGame, resolveTarget } from "./runtime.js";
+import {
+  type Family,
+  GAME_NAMES,
+  isSupportedGame,
+  resolveTarget,
+} from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
-import toolsFallback from "./tools-fallback.json" with { type: "json" };
+import fallout4ToolsFallback from "./tools-fallback-fallout4.json" with { type: "json" };
+import skyrimToolsFallback from "./tools-fallback.json" with { type: "json" };
 
 interface DevbenchTool {
   name: string;
@@ -28,6 +34,12 @@ function toMcpTool(t: DevbenchTool) {
     ...(t.readOnly ? { annotations: { readOnlyHint: true } } : {}),
   };
 }
+
+// Each game family registers a different core tool set, so each has its own offline list.
+const TOOLS_FALLBACK: Record<Family, { tools: DevbenchTool[] }> = {
+  skyrim: skyrimToolsFallback,
+  fallout4: fallout4ToolsFallback,
+};
 
 // A compiled standalone executable's embedded entry script lives under this
 // virtual path; a plain `node dist/index.js` invocation does not.
@@ -65,7 +77,7 @@ async function main(): Promise<void> {
   if (args.setup) {
     if (!args.install && !isSupportedGame(args.game)) {
       throw new Error(
-        "devbench-bridge setup requires --game se|vr or --install <path>.",
+        `devbench-bridge setup requires --game ${GAME_NAMES} or --install <path>.`,
       );
     }
     const scriptArgs = isCompiledExecutable() ? [] : [process.argv[1]];
@@ -89,7 +101,7 @@ async function main(): Promise<void> {
         // A not-yet-running game reports the static fallback, not an empty list --
         // a client typically fetches tools/list only once per session. A call still
         // fails live with GameUnavailableError's own message.
-        return { tools: toolsFallback.tools.map(toMcpTool) };
+        return { tools: TOOLS_FALLBACK[target.family].tools.map(toMcpTool) };
       }
       throw e;
     }

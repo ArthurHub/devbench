@@ -60,6 +60,24 @@ run `cmake --fresh --preset fallout4-ninja` to reset its shared compiler cache.
 To deploy on build, set `FalloutPluginTargets` to one or more game `Data` directories,
 separated by `;` — the twin of the Skyrim build's `SkyrimPluginTargets`.
 
+## Connect an MCP client
+
+Either connect straight to the game's streamable-HTTP endpoint:
+
+```sh
+claude mcp add --transport http --scope user devbench-fo4vr http://127.0.0.1:8931/mcp
+```
+
+or go through the [stdio bridge](../bridge/README.md) with `--game fo4vr` (`fo4` for flat).
+A direct connection dies with the game and needs a reconnect after every relaunch. The
+bridge keeps the session alive across restarts, answers `game not running` while the game
+is down, and lists Fallout's tools even before the game starts. The Fallout build does not
+ship `devbench-bridge.exe`; it is the same exe for every game, or run it from source:
+
+```sh
+claude mcp add --scope user devbench-fo4vr -- <node.exe> <repo>/bridge/dist/index.js --game fo4vr
+```
+
 ## Tools
 
 Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name>`).
