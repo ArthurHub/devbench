@@ -17,7 +17,7 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 > ran live on 1.2.72 (2026-10-28): 13 readbacks in one run, among them a 1024² target with
 > True Scopes drawing into it, all on the main thread and none stalling the game. Earlier
 > readbacks from worker threads hung the game and crashed the driver. On any other runtime
-> `stats`/`dump` answer 501. `measure` and `log` have no recorded live run yet. Flat
+> `stats`/`dump` answer 501. `measure`, `log` and `files` have no recorded live run yet. Flat
 > Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
@@ -103,8 +103,9 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `log`          | `action='tail'` (default) returns the last N lines of a plugin log from `Documents/My Games/Fallout4[VR]/F4SE/`, optional `grep` substring; `action='list'` enumerates them. Any plugin's log, not just devbench's.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `rendertarget` | `action='list'` every render target the engine owns, plus the threading facts below. `'stats'` (copy one back, report `{ nonFinitePct, darkPct, meanLuma, maxChannel }`) and `'dump'` (also write a BMP) are **disabled** and answer 501. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
-`memory`, `log`, `rendertarget` and `measure` are game-agnostic — they live in the core and
+`memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
 
 ## `rendertarget`, the short version
@@ -228,6 +229,40 @@ Off by default. Two gates, on purpose:
 A write returns `{ before, after, held }`. `before` is your undo; `held` distinguishes a
 write that stuck from one the engine overwrote on the next frame — which otherwise looks
 exactly like a no-op.
+
+## `files`, the short version
+
+A test that changes a mod's settings has to read the files the mod wrote and put them back
+after. Under a mod manager that can only be done from inside the game: MO2's virtual file
+system shows the game one `Data/` folder made of many mod folders, and a file the game
+creates lands in `overwrite/`, while one it edits is changed where it lives. `files` runs in
+the game process, so its paths are the game's own and a write lands where the game's would.
+
+```powershell
+# every MCM settings file, as the game sees them
+irm "http://127.0.0.1:8931/api/tool/files" -Method Post -Body '{"action":"list","root":"data","path":"MCM/Settings/*"}' -ContentType application/json
+
+# a backup that round-trips exactly, then the restore
+irm "http://127.0.0.1:8931/api/tool/files" -Method Post -Body '{"action":"read","root":"mygames","path":"FRIK_Config/FRIK.toml","encoding":"base64"}' -ContentType application/json
+irm "http://127.0.0.1:8931/api/tool/files" -Method Post -Body '{"action":"write","root":"mygames","path":"FRIK_Config/FRIK.toml","encoding":"base64","content":"..."}' -ContentType application/json
+```
+
+- **Two roots, nothing else.** `data` is the game's `Data/`, `mygames` is
+  `Documents/My Games/Fallout4[VR]/`. A path is relative to its root; an absolute one, a
+  drive, a `:` or a `..` segment is a `400`.
+- **`list`** takes a glob: `*` and `?` within a name, `**` for any number of folders, case
+  ignored. It walks only as deep as the glob reaches, and returns at most 10000 files sorted
+  by path, with `capped: true` past that. A walk that fails partway returns what it found
+  with `incomplete: true` and a `reason`.
+- **`read`** returns `text` (UTF-8, the default) or `base64`. A file that is not UTF-8 read
+  as text is a `422` that says to read it as base64, never mangled text.
+- **`write`** creates the file and its folders, and says whether it `created` it. It never
+  writes native code: a `.dll`, `.exe`, `.asi`, `.bat`, `.cmd` or `.ps1` name, or bytes that
+  start with `MZ` (a Windows executable), is a `403`. A plugin DLL is deployed by the build,
+  not through the game, which holds a loaded one locked anyway. **`delete`** removes one file;
+  a missing one answers `deleted: false`.
+- It runs on the listener thread, so it answers at the main menu and while the game is
+  stalled. Files are capped at 16 MB each way.
 
 ## `nodes`, the short version
 
@@ -469,4 +504,6 @@ see, such as its own UI tree. On Fallout only `inspect` routes extensions so far
 
 Bound to `127.0.0.1`, always, and not configurable. There is no auth, and the bench can
 run console commands and read process memory — correct for a local dev bench, unacceptable
-on a reachable address. Memory _writes_ need the two gates above.
+on a reachable address. Memory _writes_ need the two gates above. `files` writes and deletes
+only under the game's `Data/` and `Documents/My Games/<game>/`, and never writes native code
+there.

@@ -898,6 +898,37 @@
         "properties": {}
       },
       "readOnly": true
+    },
+    {
+      "name": "files",
+      "description": "List, read, write and delete files under two roots: 'data', the game's Data folder as the game sees it, so a mod manager's virtual files (MO2's mods and overwrite) are in it and a write lands where the game's own write would; and 'mygames', Documents/My Games/<game>. 'path' is relative to the root, '/' or '\\' separated; one that leaves it (absolute, a drive, '..') is refused. action='list' takes a glob ('*' and '?' in a name, '**' for any folders, case ignored) and returns { count, files: [{ path, bytes, modifiedMs }], capped } sorted by path, at most 10000; a walk that fails partway adds 'incomplete' and 'reason'. 'read' returns { path, bytes, modifiedMs, encoding, content }: 'text' (default) for UTF-8, 'base64' for any bytes, so a backup round-trips exactly. 'write' creates or replaces the file and its folders from 'content' in 'encoding', and says whether it 'created' it; it never writes native code (.dll, .exe, .asi, .bat, .cmd, .ps1, or bytes starting 'MZ'). 'delete' removes one file; 'deleted' is false when there was none. Files up to 16 MB. Runs on the listener thread, so it answers at the main menu and while the game is stalled.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": ["list", "read", "write", "delete"],
+            "type": "string"
+          },
+          "content": {
+            "description": "write: the file's content, in 'encoding'",
+            "type": "string"
+          },
+          "encoding": {
+            "description": "read, write: default 'text' (UTF-8)",
+            "enum": ["text", "base64"],
+            "type": "string"
+          },
+          "path": {
+            "description": "relative to the root; list: a glob, e.g. 'MCM/Settings/*.ini' or 'Mods_Config/**'",
+            "type": "string"
+          },
+          "root": {
+            "enum": ["data", "mygames"],
+            "type": "string"
+          }
+        },
+        "required": ["action", "root", "path"],
+        "type": "object"
+      }
     }
   ]
 }

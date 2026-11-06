@@ -39,6 +39,7 @@ const FAMILIES = {
       "sleep",
       "mcp_bridge_setup",
       "ping",
+      "files",
     ]),
   },
   fallout4: {
@@ -53,6 +54,7 @@ const FAMILIES = {
       "log",
       "rendertarget",
       "measure",
+      "files",
     ]),
   },
 };
