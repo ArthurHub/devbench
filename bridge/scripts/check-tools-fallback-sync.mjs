@@ -23,10 +23,7 @@ if (!baseRef) {
 // shared core (ping, memory, log, ...) appear in each game's fallback.
 // GfxTools.cpp is core code but NOT shared: only a platform that implements the
 // graphics seam registers it (Fallout today), so it feeds only those lists.
-const SHARED_FILES = [
-  "src/core/HostApi.cpp",
-  "src/core/tools/CommonTools.cpp",
-];
+const SHARED_FILES = ["src/core/HostApi.cpp", "src/core/tools/CommonTools.cpp"];
 const FALLBACKS = {
   "bridge/src/tools-fallback.json": [
     "src/platform/skyrim/Tools.cpp",

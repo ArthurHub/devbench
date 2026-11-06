@@ -309,7 +309,7 @@ The console's history shows the command line above its output, as when typed.
 
 Every tool that touches the game (`console`, `inspect`, `menu`, `nodes`, `rendertarget`, …)
 runs its work as a main-thread task. On Fallout 4 VR, **F4SE's task queues do not deliver
-that.** F4SE VR drains `AddTask` from a detour on the *entry* of `MessageQueueProcessTask`
+that.** F4SE VR drains `AddTask` from a detour on the _entry_ of `MessageQueueProcessTask`
 (0xDA87C0), which worker threads call too. Measured 2026-10-28 on 1.2.72, against cdb's
 thread 0:
 
@@ -440,6 +440,7 @@ Two things that bite:
   Fallout the `DevBench_GetMainThreadApi` export. A devbench without it answers null
   rather than leaving a vtable slot to call blindly. `RunOnMainThread` returns at once;
   `ctx` must stay valid until the callback has run.
+
 - **Check `GetBuildNumber()` before calling a late vtable slot.** `RegisterMenuHandler`
   needs `>= 10400`, `RegisterToolExtension` `>= 10500`. Calling a slot an older host does
   not have is not a graceful failure.
