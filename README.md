@@ -81,6 +81,9 @@ small set of conveniences) rather than a tool per operation.
 Bound to `127.0.0.1` only. The bench has no auth and can execute arbitrary commands in the
 game process — that is acceptable for a _local dev bench_ but it must never be bound to a
 network-reachable address, and `eval`-class tools are gated behind an explicit enable.
+A request from a web page not served from loopback (its `Origin`), or addressed to a name
+other than `127.0.0.1`, `localhost` or `[::1]` (its `Host`), is refused with `403`, so a
+browser tab cannot drive the bench.
 
 ## MCP client setup
 

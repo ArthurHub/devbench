@@ -507,3 +507,9 @@ run console commands and read process memory — correct for a local dev bench, 
 on a reachable address. Memory _writes_ need the two gates above. `files` writes and deletes
 only under the game's `Data/` and `Documents/My Games/<game>/`, and never writes native code
 there.
+
+A web page in the user's browser can reach `127.0.0.1` too, so every request is checked before
+routing: one with an `Origin` header that is not a loopback page (`http(s)://localhost`,
+`127.0.0.1` or `[::1]`, any port), or a `Host` header that is not one of those names, is a
+`403`. That covers a cross-origin POST and DNS rebinding. Local tools (the bridge, curl,
+PowerShell, Python) send no `Origin` and are unaffected.

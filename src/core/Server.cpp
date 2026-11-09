@@ -1,8 +1,10 @@
 #include "core/Server.h"
 
 #include "core/Host.h"
+#include "core/Json.h"
 #include "core/Log.h"
 #include "core/McpAdapter.h"
+#include "core/RequestGuardLogic.h"
 #include "core/RestAdapter.h"
 
 #include <httplib.h>
@@ -156,6 +158,24 @@ namespace dvb
 			// before giving up with an empty 400. Shorten this so that mistake fails fast
 			// instead of stalling; GET /api/health is the real fix for liveness checks.
 			http->set_read_timeout(2, 0);
+			// Runs before every route, cpp-mcp's included: its CORS preflight answer allows any
+			// origin, so without this a web page could drive /mcp and read the replies.
+			http->set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+				const auto header = [&req](const char* a_name) -> std::optional<std::string> {
+					if (!req.has_header(a_name))
+						return std::nullopt;
+					return req.get_header_value(a_name);
+				};
+				const auto host = header("Host");
+				const auto origin = header("Origin");
+				const auto refusal = RequestGuardLogic::Refusal(host, origin);
+				if (refusal.empty())
+					return httplib::Server::HandlerResponse::Unhandled;
+				dlog::warn("devbench: refused {} {}: {}", req.method, req.path, refusal);
+				res.status = 403;
+				res.set_content(json{ { "error", refusal }, { "code", 403 } }.dump(), "application/json");
+				return httplib::Server::HandlerResponse::Handled;
+			});
 			m_restAdapter->Mount(*http);
 		} else
 			dlog::warn("devbench: cpp-mcp http() returned null; REST facade unavailable");

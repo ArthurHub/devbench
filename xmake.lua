@@ -204,6 +204,7 @@ add_files("src/core/FormSearchLogic.cpp") -- form search matching, head part typ
 add_files("src/core/HavokAnimationLogic.cpp") -- animation duration and track counts from a Havok packfile; pure logic
 add_files("src/core/PluginHeaderLogic.cpp") -- author, description and masters from a plugin's TES4 record; pure logic
 add_files("src/core/FilesLogic.cpp") -- the files tool's relative paths, globs and base64; pure logic
+add_files("src/core/RequestGuardLogic.cpp") -- which Origin and Host headers the server answers; pure logic
 add_files("src/core/InspectLogic.cpp") -- lights scope/budget/ordering and the handsReady predicate; pure logic
 add_files("src/core/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic
 add_files("src/core/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
