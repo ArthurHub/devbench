@@ -19,7 +19,8 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 > readbacks from worker threads hung the game and crashed the driver. On any other runtime
 > `stats`/`dump` answer 501. `input` (`device='vrTrackedSet'`: `sequence`, `press`, `reach`)
 > drove the HMD and both controllers live on 1.2.72 (2026-11-10), down to a mod's hand
-> gesture (see "`input`, the short version"). `measure`, `log` and `files` have no recorded
+> gesture (see "`input`, the short version"). `player` moved the player in and out of power
+> armor live the same day. `measure`, `log` and `files` have no recorded
 > live run yet. Flat Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
@@ -107,6 +108,7 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (switch at once, then wait for the engine state; `outcome` is `switched`, `already`, `refused` or `notWaited`). See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 `memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
@@ -395,6 +397,42 @@ installed):
   the head, a long press back to the hand. The Common Framework's input handling saw the
   injected buttons as real ones. (Under the mod's Immersive headgear restriction that
   gesture needs headgear; the run set `iFlashlightHeadgearRequirement` to 0 for the session.)
+
+## `player`, the short version
+
+Puts the player in and out of a power armor frame so a test can set up power armor without
+a headset.
+
+```powershell
+$p = "http://127.0.0.1:8931/api/tool/player"
+irm $p -Method Post -ContentType application/json -Body '{"action":"findPowerArmor","radius":1000}'
+irm $p -Method Post -ContentType application/json -Body '{"action":"enterPowerArmor"}'   # nearest frame
+irm $p -Method Post -ContentType application/json -Body '{"action":"exitPowerArmor"}'
+```
+
+- **State** (`status`, and the wait) is the engine's own `PowerArmor::ActorInPowerArmor`
+  (VR `0x9BF5D0` through the address library), not console output.
+- **Frames** are furniture whose base has the `FurnitureTypePowerArmor` keyword, in the
+  player's cell only: a frame across an exterior cell border is not listed.
+- **Enter / exit** run `player.cf "Actor.SwitchToPowerArmor" <frame>` / `none`, the switch
+  Immersive Flashlight's release check uses. It is instant, without the step-in animation;
+  activating a frame does not get the player in.
+- **The wait** polls short main-thread reads from the listener thread until the state flips
+  or `timeoutMs` passes, so the skeleton swap is never blocked. `outcome` is `switched`,
+  `already`, `refused` (the state did not change in time) or `notWaited`. KabutoVR blocks the
+  scripted exit, which reads as `refused`.
+
+Checked live on FO4VR 1.2.72 (2026-11-10, FRIK installed, KabutoVR not active), in an
+interior cell with five frames 1,290–1,490 units away:
+
+- `findPowerArmor` listed all five; `enterPowerArmor` with no `formId` took the nearest and
+  read `inPowerArmor: true` on the first poll (6 ms); `exitPowerArmor` the same (10–87 ms).
+  Read in the same task as the command, the state has not changed yet: the switch lands on a
+  later frame, which is why the wait polls;
+- the switch brings the frame to the player rather than the player to the frame: after the
+  exit it stood 76 units away, the player had not moved;
+- `already`, a reference that is not a frame (400) and `formId` with `wait=false` behaved as
+  described. The `refused` path (KabutoVR active) has not been run.
 
 ## Main thread
 

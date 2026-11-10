@@ -490,7 +490,56 @@ namespace dvb
 			delete script;  // the engine's own deleting destructor, through the vtable
 			return compiled;
 		}
+	}
 
+	/**
+	 * Main thread. Runs a_command (';'-separated commands, none leaving the world) now and
+	 * returns { executed, command, compiled, captured, count, lines, ... } with the output it
+	 * printed, read from the console buffer before and after inside this one task.
+	 */
+	json RunConsoleCapture(const std::string& a_command, std::size_t a_maxLines)
+	{
+		const auto commands = ConsoleLogCapture::SplitConsoleCommands(a_command);
+		if (commands.empty())
+			throw ToolError(400, "console: 'command' has no command in it");
+
+		// The echo ExecuteCommand would print, so the console history still shows
+		// what ran. Before the baseline, so it is not part of the output.
+		if (auto* log = RE::ConsoleLog::GetSingleton())
+			log->AddString((a_command + "\n").c_str());
+		const auto before = ReadConsoleBuffer();
+		bool       compiled = true;
+		for (const auto& one : commands)
+			compiled = RunConsoleCommandNow(one) && compiled;
+		const auto after = ReadConsoleBuffer();
+
+		json r{ { "executed", true }, { "command", a_command }, { "compiled", compiled } };
+		if (!before || !after) {
+			r["captured"] = false;
+			r["note"] = "the console buffer could not be read, so the output was not captured; read the in-game console";
+			return r;
+		}
+		const auto appended = ConsoleLogCapture::AppendedLines(*after, before->size(), a_maxLines);
+		r["captured"] = true;
+		r["count"] = appended.lines.size();
+		r["lines"] = appended.lines;
+		if (appended.omitted)
+			r["omitted"] = appended.omitted;
+		if (appended.drained)
+			r["drained"] = true;
+		if (after->size() >= kConsoleBufferNearlyFull) {
+			r["bufferNearlyFull"] = true;
+			r["note"] = std::format(
+				"the console buffer holds {} of its {} bytes, and the engine silently drops any line that "
+				"would pass the limit, so output may be missing. It fills only until the Console menu is "
+				"first created: menu action='open' then 'close' with name='Console' drains it for good.",
+				after->size(), kConsoleBufferLimit);
+		}
+		return r;
+	}
+
+	namespace
+	{
 		json ConsoleHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string command = a_args.value("command", std::string{});
@@ -540,47 +589,12 @@ namespace dvb
 					std::ranges::equal(std::string_view(command).substr(0, kForEachRef.size()), kForEachRef,
 						[](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; }))
 					throw ToolError(400, "console: a ForEachRef[...] block only runs through the console's queue; pass capture=false");
-				const auto commands = ConsoleLogCapture::SplitConsoleCommands(command);
-				if (commands.empty())
+				if (ConsoleLogCapture::SplitConsoleCommands(command).empty())
 					throw ToolError(400, "console: 'command' has no command in it");
 
 				// One task for the baseline, the commands and the read: the Console menu can
 				// only drain the buffer after this task returns.
-				out = MainThread::RunAndWait([command, commands, maxLines]() -> json {
-					// The echo ExecuteCommand would print, so the console history still shows
-					// what ran. Before the baseline, so it is not part of the output.
-					if (auto* log = RE::ConsoleLog::GetSingleton())
-						log->AddString((command + "\n").c_str());
-					const auto before = ReadConsoleBuffer();
-					bool       compiled = true;
-					for (const auto& one : commands)
-						compiled = RunConsoleCommandNow(one) && compiled;
-					const auto after = ReadConsoleBuffer();
-
-					json r{ { "executed", true }, { "command", command }, { "compiled", compiled } };
-					if (!before || !after) {
-						r["captured"] = false;
-						r["note"] = "the console buffer could not be read, so the output was not captured; read the in-game console";
-						return r;
-					}
-					const auto appended = ConsoleLogCapture::AppendedLines(*after, before->size(), maxLines);
-					r["captured"] = true;
-					r["count"] = appended.lines.size();
-					r["lines"] = appended.lines;
-					if (appended.omitted)
-						r["omitted"] = appended.omitted;
-					if (appended.drained)
-						r["drained"] = true;
-					if (after->size() >= kConsoleBufferNearlyFull) {
-						r["bufferNearlyFull"] = true;
-						r["note"] = std::format(
-							"the console buffer holds {} of its {} bytes, and the engine silently drops any line that "
-							"would pass the limit, so output may be missing. It fills only until the Console menu is "
-							"first created: menu action='open' then 'close' with name='Console' drains it for good.",
-							after->size(), kConsoleBufferLimit);
-					}
-					return r;
-				});
+				out = MainThread::RunAndWait([command, maxLines]() -> json { return RunConsoleCapture(command, maxLines); });
 			}
 			out["blocked"] = blocked;
 			if (blocked) {
@@ -779,6 +793,7 @@ namespace dvb
 	{
 		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
 		RegisterInputTool(a_registry);
+		RegisterPlayerTool(a_registry);
 
 		// When a plugin registers an inspect kind, rebuild the descriptor so the kind is in
 		// tools/list from the next call (re-registering also fires tools/list_changed).

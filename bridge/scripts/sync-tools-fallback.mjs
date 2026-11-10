@@ -56,6 +56,7 @@ const FAMILIES = {
       "measure",
       "files",
       "input",
+      "player",
     ]),
   },
 };
