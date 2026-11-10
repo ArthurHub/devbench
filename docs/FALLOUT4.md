@@ -17,8 +17,10 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 > ran live on 1.2.72 (2026-10-28): 13 readbacks in one run, among them a 1024² target with
 > True Scopes drawing into it, all on the main thread and none stalling the game. Earlier
 > readbacks from worker threads hung the game and crashed the driver. On any other runtime
-> `stats`/`dump` answer 501. `measure`, `log` and `files` have no recorded live run yet. Flat
-> Fallout 4 uses the same DLL but has never been loaded.
+> `stats`/`dump` answer 501. `input` (`device='vrTrackedSet'`: `sequence`, `press`, `reach`)
+> drove the HMD and both controllers live on 1.2.72 (2026-11-10), down to a mod's hand
+> gesture (see "`input`, the short version"). `measure`, `log` and `files` have no recorded
+> live run yet. Flat Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
 
@@ -104,6 +106,7 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `rendertarget` | `action='list'` every render target the engine owns, plus the threading facts below. `'stats'` (copy one back, report `{ nonFinitePct, darkPct, meanLuma, maxChannel }`) and `'dump'` (also write a BMP) are **disabled** and answer 501. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 `memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
@@ -340,6 +343,59 @@ Three engine facts it is built around, worth not rediscovering:
 
 The console's history shows the command line above its output, as when typed.
 
+## `input`, the short version
+
+Drives the VR controllers and HMD so a test can exercise what reacts to hand position and
+buttons. The contract is Skyrim's `vrTrackedSet`, unchanged: one owner at a time, the whole
+tracked set (HMD, left, right) replaced in every frame, the real devices passed through
+whenever nothing is active. Terms (Wand, Tracked set, Sequence, Reach) are in
+[GLOSSARY.md](../GLOSSARY.md).
+
+```powershell
+$i = "http://127.0.0.1:8931/api/tool/input"
+irm $i -Method Post -ContentType application/json -Body '{"action":"status"}'
+# left hand 10 units in front of the HMD, held 5 s
+irm $i -Method Post -ContentType application/json -Body '{"action":"reach","owner":"t","hands":{"left":{"node":"hmdNode","front":10}},"holdMs":5000}'
+irm $i -Method Post -ContentType application/json -Body '{"action":"reachStatus"}'   # phase: holding
+# tap the left trigger while it holds
+irm $i -Method Post -ContentType application/json -Body '{"action":"press","owner":"t","hand":"left","buttons":["trigger"]}'
+```
+
+- **`sequence`** plays frames from `observe`'s shape. It returns a `controlToken` that
+  `stop` needs. A `sequence` carrying the running one's token replaces its frames in place,
+  so chained moves never hand the devices back to the physical controllers in between.
+- **`press`** holds `trigger`, `grip`, `a`, `b` or `thumbstick` on one hand over the active
+  sequence (or reach hold), as its owner; trigger and grip also drive their axis to 1.0.
+- **`reach`** targets the player's nodes by name: a VR node slot as `nodes` names it
+  (`hmdNode`, `uprightHmdNode`, …), else the first-person skeleton, else the body skeleton.
+  It reads where the hands land from the wand nodes (`primaryWandNode` /
+  `secondaryWandNode`, mapped to physical left/right through `bLeftHandedMode:VR`, read live),
+  so it works with or without FRIK. It calibrates first (four 4 s legs, 0.2 m each, about
+  16 s per hand), then eases in over 1.5 s and corrects until within `toleranceUnits`. The
+  HMD sits at standing height (eyes 1.65 m, hands 1.0 m), so the body is not sneaking.
+- **Hooks** go on the real IVRSystem_019 / IVRCompositor_022 objects, looked up through
+  `openvr_api.dll`'s `VR_GetGenericInterface`, at kGameDataReady/kGameLoaded and retried
+  until OpenVR is up. That puts devbench closest to the runtime, under the F4VR Common
+  Framework's own patches, so injected input passes through other mods' controller hooks
+  like real input. `status.hooks` reports `closestToRuntime` per slot; `false` means another
+  mod patched that slot first and injected input skips it.
+- **Lifecycle**: an active sequence or reach stops on load and new game.
+
+Checked live on FO4VR 1.2.72 (2026-11-10, FRIK, F4VR Common Framework and FO4VRTools
+installed):
+
+- all nine hooked slots `closestToRuntime: true`; `observe` returns the physical tracked set;
+- a `sequence` moved the wand 21 world units for 0.3 m of tracking (about 70 units per
+  metre); a load released it;
+- `reach` converged within 0.6 units on the first or second pass, in left-handed mode too
+  (the wands swap and reach followed the swap); the hand stays injected from the first frame
+  to the last, with no step over 3 units after calibration;
+- the acceptance scenario: Immersive Flashlight's head gesture, driven by devbench alone.
+  `reach` put the offhand 10 units in front of `hmdNode`, a `press` tap moved the light to
+  the head, a long press back to the hand. The Common Framework's input handling saw the
+  injected buttons as real ones. (Under the mod's Immersive headgear restriction that
+  gesture needs headgear; the run set `iFlashlightHeadgearRequirement` to 0 for the session.)
+
 ## Main thread
 
 Every tool that touches the game (`console`, `inspect`, `menu`, `nodes`, `rendertarget`, …)
@@ -382,6 +438,21 @@ is on a worker thread in game, so devbench offers its queue through the C-ABI. S
   than printing none. On FO4VR 1.2.72 the remap is `physical = [rtm + 0x13BC + id*4]`
   (u32), e.g. logical 0x61 → 93, 0x62 → 94, 4 → 6 — measured by the True Scopes
   investigation, not yet used by `rendertarget`, which still takes the physical index.
+- **`input` on Fallout: what is not verified.**
+  - **Skyrim was not re-run live after the VR input code moved to `src/core/`** (the Sequence
+    manager, hooks and Reach are now shared). Skyrim builds and its unit tests pass; its
+    live path (hand bones, controller-index remap) is untested since the move.
+  - **Controller indices are not remapped on Fallout.** Skyrim points the game at the
+    frame's controller indices; on Fallout that seam is a no-op, so frames should carry the
+    indices `observe` reports. Whether FO4VR caches indices so a frame with others is
+    ignored is unchecked.
+  - **One frame of physical pose at a sequence's start and stop.** The timeline probe sees a
+    single sample of the real controller as a sequence begins and ends. Inside a reach, only
+    the first start and the last stop remain; the cause is not investigated.
+  - **Calibration legs and head aim jump.** Each 0.2 m calibration leg is a step, and with
+    `head.lookAt` the HMD turns in one step when calibration ends.
+  - **Flat Fallout 4** registers `input` too; `capabilities` answers `available: false` and
+    the actions 503 (no OpenVR). Never run.
 - **`record` / `replay` / `scenario` / `capture` / `game` / `papyrus`** are Skyrim-only
   so far. They are mostly pure logic around a few engine calls (`Recording.cpp` is 1014
   lines with 11 game references), so porting them is bounded work, not a rewrite.

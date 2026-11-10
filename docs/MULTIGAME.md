@@ -61,6 +61,10 @@ core/MainThread.h  RunAndWait / LastCompletedFrame / PendingTasks
 core/GameState.h   CurrentFrame()
 ```
 
+Later seams follow the same pattern: `core/gfx/Device.h` for the graphics device and
+`core/VRHost.h` for OpenVR (interfaces, controller indices, the hand and node reads Reach
+needs), which is what lets VR input live in the core for both games.
+
 Free functions, one definition per platform, resolved at link time. **Not** an `IHost`
 vtable — that choice is load-bearing: an interface object would have meant touching every
 one of the ~3,500 lines of moved Skyrim code to thread a host reference through. This way
