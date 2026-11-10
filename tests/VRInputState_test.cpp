@@ -2,6 +2,8 @@
 
 #include "core/VRInputState.h"
 
+#include <cmath>
+
 using dvb::json;
 using dvb::ParseBoundedIntegerArgument;
 using dvb::ParseVRTrackedInputFrames;
@@ -199,4 +201,41 @@ TEST_CASE("only internal replay may survive lifecycle cleanup")
 	CHECK(decision.present);
 	CHECK(decision.preserved);
 	CHECK(state.Starting());
+}
+
+TEST_CASE("press maps button names to OpenVR bits, touch and analog axes")
+{
+	const auto press = dvb::ParseVRPress(json{ { "hand", "left" }, { "buttons", json::array({ "trigger", "a" }) } });
+	CHECK(!press.right);
+	CHECK(press.pressed == ((1ull << 33) | (1ull << 7)));
+	CHECK(press.touched == press.pressed);
+	CHECK(press.axes[2].has_value());
+	CHECK(!press.axes[0].has_value());
+	CHECK(press.durationMs == dvb::kDefaultPressMs);
+	CHECK(press.delayMs == 0);
+}
+
+TEST_CASE("press rejects a missing hand, unknown buttons and out-of-range timing")
+{
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "buttons", json::array({ "trigger" }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "middle" }, { "buttons", json::array({ "trigger" }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array() } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array({ "jump" }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array({ "grip" }) }, { "durationMs", 5 } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array({ "grip" }) }, { "delayMs", -1 } }));
+}
+
+TEST_CASE("press lays its state over the frame's controller state")
+{
+	dvb::VRControllerState state;
+	state.packetNumber = 41;
+	state.pressed = 1ull << 1;
+	state.axes[0] = 0.5f;
+	const auto press = dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array({ "grip" }) } });
+	const auto out = dvb::ApplyVRPress(state, press);
+	CHECK(out.pressed == ((1ull << 1) | (1ull << 2)));
+	CHECK(out.touched == (1ull << 2));
+	CHECK(std::abs(out.axes[0] - 0.5f) <= 1e-6f);
+	CHECK(std::abs(out.axes[4] - 1.0f) <= 1e-6f);
+	CHECK(out.packetNumber == 41);
 }

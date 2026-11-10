@@ -44,7 +44,12 @@ namespace dvb
 			"frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it "
 			"is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this "
 			"owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on "
-			"load and new game. Emits input.vrTrackedSet events. action='reach' moves one or both controllers until their "
+			"load and new game. Emits input.vrTrackedSet events. "
+			"action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller "
+			"for durationMs on top of the active sequence or reach hold, as its owner (409 otherwise); trigger and grip also "
+			"drive their analog axis to 1.0, and the controller packet number moves on at press start and end. It ends with "
+			"the sequence. capabilities.vrTrackedSet.pressButtons lists the names. "
+			"action='reach' moves one or both controllers until their "
 			"wand nodes (primaryWandNode / secondaryWandNode, the in-game nodes the game places at each controller, mapped "
 			"to physical left/right) sit next to a named node of the player: a VR node slot as the nodes tool names it "
 			"(hmdNode, uprightHmdNode, ...), else a node of that name in the first-person skeleton, else in the body "
@@ -58,12 +63,16 @@ namespace dvb
 		input.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "reach", "reachStatus", "reachStop" }) } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "press", "reach", "reachStatus", "reachStop" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "vrTrackedSet" }) }, { "description", "the only device on Fallout 4 (default)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
 								{ "frames", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumVRTrackedFrames }, { "description", "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes" }, { "items", json{ { "type", "object" } } } } },
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "sequence: final-state visibility before automatic release (default 50ms)" } } },
 								{ "controlToken", json{ { "type", "string" }, { "description", "stop/releaseAll: opaque token returned by sequence start" } } },
+								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
+								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
+								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
+								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "press: how long the buttons stay down (default 100)" } } },
 								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that controller's wand next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand" } } },
 								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters" } } },
 								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },

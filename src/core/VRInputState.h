@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -122,4 +123,30 @@ namespace dvb
 
 	// Canonical JSON used by status/events and by host-independent round-trip tests.
 	json VRTrackedInputFrameJson(const VRTrackedInputFrame& a_frame);
+
+	inline constexpr std::int64_t kDefaultPressMs = 100;
+	inline constexpr std::int64_t kMaximumPressMs = 10000;
+	inline constexpr std::int64_t kMaximumPressDelayMs = 30000;
+
+	// One `press`: controller state laid over the active sequence's frames for one hand.
+	struct VRPressRequest
+	{
+		bool                                 right = false;
+		std::uint64_t                        pressed = 0;
+		std::uint64_t                        touched = 0;
+		std::array<std::optional<float>, 10> axes{};  // set entries replace the frame's axis value
+		std::int64_t                         delayMs = 0;
+		std::int64_t                         durationMs = kDefaultPressMs;
+		std::vector<std::string>             buttons;
+	};
+
+	// The button names `press` accepts, each mapped to the OpenVR button (and axis) it drives.
+	json VRPressButtonsJson();
+
+	// Parse and validate `press` arguments. Throws std::invalid_argument naming the bad field.
+	VRPressRequest ParseVRPress(const json& a_args);
+
+	// The frame's controller state with the press laid over it: button and touch bits OR-ed in,
+	// overridden axes replaced.
+	VRControllerState ApplyVRPress(const VRControllerState& a_state, const VRPressRequest& a_press);
 }

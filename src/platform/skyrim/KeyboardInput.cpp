@@ -856,9 +856,13 @@ namespace dvb
 			"always asynchronous, has one owner, passes the real runtime through when inactive, and "
 			"returns a controlToken required for external stop. Failed controller-index restoration remains "
 			"retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay "
-			"may explicitly survive the load/new-game events it is reproducing. There are deliberately no per-device or "
-			"per-button VR mutation actions: submit the coherent tracked set so poses and controls cannot "
-			"come from different clocks. device='vrTrackedSet' action='reach' places one or both hands next to nodes of the player: "
+			"may explicitly survive the load/new-game events it is reproducing. Poses only ever come from a whole "
+			"tracked-set frame, so they cannot come from different clocks; the one per-controller action is press. "
+			"device='vrTrackedSet' action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller "
+			"for durationMs on top of the active sequence or reach hold, as its owner (409 otherwise); trigger and grip also "
+			"drive their analog axis to 1.0, and the controller packet number moves on at press start and end. It ends with "
+			"the sequence. capabilities.vrTrackedSet.pressButtons lists the names. "
+			"device='vrTrackedSet' action='reach' places one or both hands next to nodes of the player: "
 			"it calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the hand and "
 			"target nodes after each settle (the body follows the arms, so a node moves when a hand reaches it) and corrects "
 			"until every hand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a "
@@ -869,11 +873,11 @@ namespace dvb
 		input.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "down", "up", "tap", "sequence", "stop", "releaseAll", "reach", "reachStatus", "reachStop" }) } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "down", "up", "tap", "sequence", "stop", "releaseAll", "press", "reach", "reachStatus", "reachStop" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "keyboard", "vrTrackedSet" }) }, { "description", "mutation/status device; omit for capabilities" } } },
 								{ "key", json{ { "oneOf", json::array({ json{ { "type", "string" } }, json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 258 } } }) }, { "description", "down/up/tap: documented key name, raw DirectInput scancode (1-255), or mouse button code (256-258 = mouseLeft / mouseRight / mouseMiddle)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
-								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 5000 }, { "description", "tap duration (default 50); sequence tap/wait event duration" } } },
+								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "keyboard: tap duration (default 50, max 5000); sequence tap/wait event duration. vrTrackedSet press: how long the buttons stay down (default 100)" } } },
 								{ "maxHoldMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", kMaximumMaxHoldMs }, { "description", "down safety lease (default 5000); automatic up at expiry" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "internal cleanup only; external true is rejected" } } },
 								{ "all", json{ { "type", "boolean" }, { "description", "internal cleanup only; external true is rejected" } } },
@@ -882,6 +886,9 @@ namespace dvb
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "vrTrackedSet sequence: final-state visibility before automatic release (default 50ms)" } } },
 								{ "controlToken", json{ { "type", "string" }, { "description", "vrTrackedSet stop/releaseAll: opaque token returned by sequence start" } } },
 								{ "surviveLifecycle", json{ { "type", "boolean" }, { "description", "internal recording replay only; external true is rejected" } } },
+								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
+								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
+								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
 								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand" } } },
 								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters, e.g. 1.6 to frame low targets from standing height" } } },
 								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },

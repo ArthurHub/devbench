@@ -346,4 +346,81 @@ namespace dvb
 			{ "originCode", a_frame.originCode }, { "hmd", PoseJson(a_frame.hmd) },
 			{ "left", std::move(left) }, { "right", std::move(right) } };
 	}
+
+	namespace
+	{
+		struct PressButton
+		{
+			const char* name;
+			int         bit;   // OpenVR EVRButtonId
+			int         axis;  // axis pair driven to x = 1.0 while pressed, or -1
+			const char* meaning;
+		};
+
+		// OpenVR legacy button ids (openvr.h EVRButtonId) and the axis each analog control reports on.
+		constexpr PressButton kPressButtons[]{
+			{ "trigger", 33, 1, "k_EButton_SteamVR_Trigger; axis 1 x = 1.0" },
+			{ "grip", 2, 2, "k_EButton_Grip; axis 2 x = 1.0" },
+			{ "a", 7, -1, "k_EButton_A (A / X)" },
+			{ "b", 1, -1, "k_EButton_ApplicationMenu (B / Y)" },
+			{ "thumbstick", 32, -1, "k_EButton_SteamVR_Touchpad (stick or touchpad click)" },
+		};
+	}
+
+	json VRPressButtonsJson()
+	{
+		json out = json::object();
+		for (const auto& button : kPressButtons)
+			out[button.name] = button.meaning;
+		return out;
+	}
+
+	VRPressRequest ParseVRPress(const json& a_args)
+	{
+		VRPressRequest press;
+		if (!a_args.contains("hand") || !a_args["hand"].is_string())
+			throw std::invalid_argument("press requires 'hand' ('left' or 'right')");
+		const auto hand = a_args["hand"].get<std::string>();
+		if (hand != "left" && hand != "right")
+			throw std::invalid_argument(std::format("'hand' must be 'left' or 'right', not '{}'", hand));
+		press.right = hand == "right";
+
+		if (!a_args.contains("buttons") || !a_args["buttons"].is_array() || a_args["buttons"].empty())
+			throw std::invalid_argument("press requires 'buttons', a non-empty array of button names");
+		for (const auto& item : a_args["buttons"]) {
+			if (!item.is_string())
+				throw std::invalid_argument("'buttons' must contain button names");
+			const auto  name = item.get<std::string>();
+			const auto* match = std::find_if(std::begin(kPressButtons), std::end(kPressButtons),
+				[&](const PressButton& a_button) { return name == a_button.name; });
+			if (match == std::end(kPressButtons)) {
+				std::string known;
+				for (const auto& button : kPressButtons)
+					known += std::string(known.empty() ? "" : ", ") + button.name;
+				throw std::invalid_argument(std::format("unknown button '{}' (known: {})", name, known));
+			}
+			const std::uint64_t bit = 1ull << match->bit;
+			press.pressed |= bit;
+			press.touched |= bit;
+			if (match->axis >= 0)
+				press.axes[static_cast<std::size_t>(match->axis) * 2] = 1.0f;
+			press.buttons.push_back(name);
+		}
+
+		press.durationMs = ParseBoundedIntegerArgument(a_args, "durationMs", kDefaultPressMs, 10, kMaximumPressMs);
+		press.delayMs = ParseBoundedIntegerArgument(a_args, "delayMs", 0, 0, kMaximumPressDelayMs);
+		return press;
+	}
+
+	VRControllerState ApplyVRPress(const VRControllerState& a_state, const VRPressRequest& a_press)
+	{
+		VRControllerState out = a_state;
+		out.pressed |= a_press.pressed;
+		out.touched |= a_press.touched;
+		for (std::size_t i = 0; i < out.axes.size(); ++i) {
+			if (a_press.axes[i])
+				out.axes[i] = *a_press.axes[i];
+		}
+		return out;
+	}
 }

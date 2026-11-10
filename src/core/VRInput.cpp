@@ -17,6 +17,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -377,13 +378,76 @@ namespace dvb
 					{ "restored", restored }, { "restorationPending", !restored } };
 			}
 
+			/**
+			 * Lays a `press` over the active sequence for one hand. Only the sequence's owner may
+			 * press, and the press ends with that sequence even if its duration has not run out.
+			 */
+			json Press(const json& a_args, const std::string& a_owner)
+			{
+				VRPressRequest request;
+				try {
+					request = ParseVRPress(a_args);
+				} catch (const std::exception& e) {
+					throw ToolError(400, e.what());
+				}
+				std::lock_guard lock(m_mutex);
+				if (!m_transaction.Active())
+					throw ToolError(409, "press needs an active sequence (or a reach run that is holding) to lay the buttons over");
+				if (m_transaction.Owner() != a_owner)
+					throw ToolError(409, std::format("the active sequence is owned by '{}' (not '{}'); press as its owner",
+											 m_transaction.Owner(), a_owner));
+				const auto now = steady_clock::now();
+				const auto slot = request.right ? 1u : 0u;
+				const auto remainingMs = m_durationMs - duration_cast<milliseconds>(now - m_started).count();
+				json       result{ { "contract", ContractJson() }, { "device", kDevice }, { "action", "press" },
+					{ "owner", a_owner }, { "generation", m_transaction.Generation() },
+					{ "hand", request.right ? "right" : "left" }, { "buttons", request.buttons },
+					{ "delayMs", request.delayMs }, { "durationMs", request.durationMs },
+					{ "sequenceRemainingMs", remainingMs } };
+				m_presses[slot] = ActivePress{ std::move(request), m_transaction.Generation(),
+					now + milliseconds(result["delayMs"].get<std::int64_t>()),
+					now + milliseconds(result["delayMs"].get<std::int64_t>() + result["durationMs"].get<std::int64_t>()) };
+				++m_pressStarts[slot];
+				PublishLocked("press", result);
+				return result;
+			}
+
 			std::optional<VRTrackedInputFrame> Current() const
 			{
 				std::lock_guard lock(m_mutex);
-				return m_transaction.Active() ? m_current : std::nullopt;
+				if (!m_transaction.Active() || !m_current)
+					return std::nullopt;
+				VRTrackedInputFrame frame = *m_current;
+				const auto          now = steady_clock::now();
+				ApplyPress(frame.left.controller, 0, now);
+				ApplyPress(frame.right.controller, 1, now);
+				return frame;
 			}
 
 		private:
+			struct ActivePress
+			{
+				VRPressRequest           request;
+				std::uint64_t            generation = 0;
+				steady_clock::time_point from;
+				steady_clock::time_point until;
+			};
+
+			/**
+			 * Applies a hand's press while its window is open. The packet number moves on at every
+			 * press start and end (offset 2n-1 inside the n-th press, 2n outside), so a reader that
+			 * only re-reads state when the packet number changes still sees both edges.
+			 */
+			void ApplyPress(VRControllerState& a_state, std::size_t a_slot, steady_clock::time_point a_now) const
+			{
+				const auto& press = m_presses[a_slot];
+				const bool  inWindow = press && press->generation == m_transaction.Generation() &&
+				                       a_now >= press->from && a_now < press->until;
+				if (inWindow)
+					a_state = ApplyVRPress(a_state, press->request);
+				a_state.packetNumber += 2 * m_pressStarts[a_slot] - (inWindow ? 1 : 0);
+			}
+
 			void Playback(std::uint64_t a_generation, const std::string& a_owner,
 				std::vector<VRTrackedInputFrame> a_frames, int a_tailMs,
 				steady_clock::time_point a_started)
@@ -609,21 +673,23 @@ namespace dvb
 					}
 			}
 
-			mutable std::mutex                 m_mutex;
-			std::condition_variable            m_cv;
-			EventBus*                          m_events = nullptr;
-			VRSequenceTransaction              m_transaction;
-			std::uint32_t                      m_previousLeftIndex = vr::k_unTrackedDeviceIndexInvalid;
-			std::uint32_t                      m_previousRightIndex = vr::k_unTrackedDeviceIndexInvalid;
-			std::string                        m_pendingTerminalEvent;
-			std::size_t                        m_frameIndex = 0;
-			std::size_t                        m_frameCount = 0;
-			std::int64_t                       m_durationMs = 0;
-			steady_clock::time_point           m_started;
-			std::optional<VRTrackedInputFrame> m_current;
-			json                               m_pendingCompletion = json::object();
-			json                               m_lastCompletion = json::object();
-			std::optional<std::uint64_t>       m_recoveryGeneration;
+			mutable std::mutex                        m_mutex;
+			std::condition_variable                   m_cv;
+			EventBus*                                 m_events = nullptr;
+			VRSequenceTransaction                     m_transaction;
+			std::uint32_t                             m_previousLeftIndex = vr::k_unTrackedDeviceIndexInvalid;
+			std::uint32_t                             m_previousRightIndex = vr::k_unTrackedDeviceIndexInvalid;
+			std::string                               m_pendingTerminalEvent;
+			std::size_t                               m_frameIndex = 0;
+			std::size_t                               m_frameCount = 0;
+			std::int64_t                              m_durationMs = 0;
+			steady_clock::time_point                  m_started;
+			std::optional<VRTrackedInputFrame>        m_current;
+			json                                      m_pendingCompletion = json::object();
+			json                                      m_lastCompletion = json::object();
+			std::optional<std::uint64_t>              m_recoveryGeneration;
+			std::array<std::optional<ActivePress>, 2> m_presses;
+			std::array<std::uint32_t, 2>              m_pressStarts{};
 		};
 
 		bool CanOverridePoseArray(const VRTrackedInputFrame& a_frame,
@@ -908,7 +974,8 @@ namespace dvb
 			{ "device", kDevice },
 			{ "atomicDevices", json::array({ "hmd", "left", "right" }) },
 			{ "injection", "OpenVR IVRCompositor poses + IVRSystem controller state" },
-			{ "actions", json::array({ "status", "observe", "sequence", "stop", "releaseAll" }) },
+			{ "actions", json::array({ "status", "observe", "sequence", "stop", "releaseAll", "press" }) },
+			{ "pressButtons", VRPressButtonsJson() },
 			{ "timing", "steadyMillisecondsFromSequenceStart" },
 			{ "ordering", "tMs then seq" },
 			{ "poseEncoding", "OpenVR device-to-absolute 3x4 row-major" },
@@ -946,6 +1013,8 @@ namespace dvb
 				return ReachControl::Start(a_args, owner, a_ctx);
 			if (action == "reachStop")
 				return ReachControl::Stop(owner);
+			if (action == "press")
+				return VRTrackedSetManager::Get().Press(a_args, owner);
 			if (action == "stop" || action == "releaseAll") {
 				if (a_args.contains("controlToken") && !a_args["controlToken"].is_string())
 					throw ToolError(400, "'controlToken' must be a string");
@@ -954,7 +1023,7 @@ namespace dvb
 					a_ctx.internal,
 					action == "releaseAll" ? "releaseAll" : "request");
 			}
-			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|reach|reachStatus|reachStop)", action));
+			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|reach|reachStatus|reachStop)", action));
 		} catch (const json::exception& e) {
 			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}

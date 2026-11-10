@@ -279,7 +279,7 @@
     },
     {
       "name": "input",
-      "description": "Synthetic VR input. action='capabilities' (default) returns the contract version, readiness, limits and supported actions; clients should check it rather than assume this tool exists. device='vrTrackedSet' (the only device on Fallout 4) replaces the HMD and both controllers at the OpenVR boundary. 'status' reports readiness, the active sequence and, per hooked OpenVR call, whether devbench sits closest to the runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on load and new game. Emits input.vrTrackedSet events. action='reach' moves one or both controllers until their wand nodes (primaryWandNode / secondaryWandNode, the in-game nodes the game places at each controller, mapped to physical left/right) sit next to a named node of the player: a VR node slot as the nodes tool names it (hmdNode, uprightHmdNode, ...), else a node of that name in the first-person skeleton, else in the body skeleton. It calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the wand and target nodes after each settle and corrects until every wand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, error, active, stopping }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both controllers like a sequence, and it ends at a load. Fingers are not driven.",
+      "description": "Synthetic VR input. action='capabilities' (default) returns the contract version, readiness, limits and supported actions; clients should check it rather than assume this tool exists. device='vrTrackedSet' (the only device on Fallout 4) replaces the HMD and both controllers at the OpenVR boundary. 'status' reports readiness, the active sequence and, per hooked OpenVR call, whether devbench sits closest to the runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on load and new game. Emits input.vrTrackedSet events. action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller for durationMs on top of the active sequence or reach hold, as its owner (409 otherwise); trigger and grip also drive their analog axis to 1.0, and the controller packet number moves on at press start and end. It ends with the sequence. capabilities.vrTrackedSet.pressButtons lists the names. action='reach' moves one or both controllers until their wand nodes (primaryWandNode / secondaryWandNode, the in-game nodes the game places at each controller, mapped to physical left/right) sit next to a named node of the player: a VR node slot as the nodes tool names it (hmdNode, uprightHmdNode, ...), else a node of that name in the first-person skeleton, else in the body skeleton. It calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the wand and target nodes after each settle and corrects until every wand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, error, active, stopping }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both controllers like a sequence, and it ends at a load. Fingers are not driven.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -290,6 +290,7 @@
               "sequence",
               "stop",
               "releaseAll",
+              "press",
               "reach",
               "reachStatus",
               "reachStop"
@@ -302,14 +303,35 @@
             "minimum": 0,
             "type": "number"
           },
+          "buttons": {
+            "description": "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)",
+            "items": {
+              "enum": ["trigger", "grip", "a", "b", "thumbstick"],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
           "controlToken": {
             "description": "stop/releaseAll: opaque token returned by sequence start",
             "type": "string"
+          },
+          "delayMs": {
+            "description": "press: wait this long before pressing (default 0)",
+            "maximum": 30000,
+            "minimum": 0,
+            "type": "integer"
           },
           "device": {
             "description": "the only device on Fallout 4 (default)",
             "enum": ["vrTrackedSet"],
             "type": "string"
+          },
+          "durationMs": {
+            "description": "press: how long the buttons stay down (default 100)",
+            "maximum": 10000,
+            "minimum": 10,
+            "type": "integer"
           },
           "frames": {
             "description": "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes",
@@ -319,6 +341,11 @@
             "maxItems": 60000,
             "minItems": 1,
             "type": "array"
+          },
+          "hand": {
+            "description": "press: the physical controller",
+            "enum": ["left", "right"],
+            "type": "string"
           },
           "hands": {
             "description": "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that controller's wand next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand",
