@@ -15,6 +15,7 @@ namespace dvb
 
 	// Installs process-lifetime pass-through OpenVR interface hooks. They alter data only while
 	// one owned atomic sequence is active; otherwise every call reaches the original runtime.
-	void MarkVRInputReady(EventBus& a_events);
+	// Returns true once installed; idempotent, so a platform may retry until OpenVR is up.
+	bool MarkVRInputReady(EventBus& a_events);
 	void ReleaseVRInputForLifecycle(const char* a_reason);
 }

@@ -778,6 +778,7 @@ namespace dvb
 	void RegisterGameTools(ToolRegistry& a_registry, EventBus&)
 	{
 		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
+		RegisterInputTool(a_registry);
 
 		// When a plugin registers an inspect kind, rebuild the descriptor so the kind is in
 		// tools/list from the next call (re-registering also fires tools/list_changed).

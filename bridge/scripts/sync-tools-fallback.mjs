@@ -55,6 +55,7 @@ const FAMILIES = {
       "rendertarget",
       "measure",
       "files",
+      "input",
     ]),
   },
 };

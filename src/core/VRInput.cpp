@@ -58,14 +58,33 @@ namespace dvb
 		constexpr std::size_t kIVRSystemGetControllerStateWithPoseSlot = 35;
 
 		std::atomic<bool> g_vrReady{ false };
+		std::mutex        g_installMutex;
+
+		struct HookSlot
+		{
+			const char* name;
+			bool        closestToRuntime;
+		};
+		// Written once by InstallHooks before g_vrReady is set; read-only afterwards.
+		std::vector<HookSlot> g_hookSlots;
+
+		HMODULE ModuleOf(const void* a_address)
+		{
+			HMODULE module = nullptr;
+			GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				static_cast<LPCWSTR>(a_address), &module);
+			return module;
+		}
 
 		/**
 		 * Replaces one slot of a COM-style object's vtable and returns the previous entry.
-		 * The vtable is shared by every holder of the interface, so later hooks on the same
-		 * slot (other mods) chain to this one through the pointer they save.
+		 * The vtable is shared by every holder of the interface, so a hook installed later on
+		 * the same slot (another mod) runs before this one and chains to it. Records whether
+		 * the previous entry still pointed into the runtime module that owns the vtable, i.e.
+		 * whether devbench sits closest to the runtime on that slot.
 		 */
 		template <class Fn>
-		Fn PatchSlot(void* a_object, std::size_t a_slot, Fn a_hook)
+		Fn PatchSlot(void* a_object, std::size_t a_slot, const char* a_name, Fn a_hook)
 		{
 			auto** vtable = *static_cast<void***>(a_object);
 			DWORD  oldProtect = 0;
@@ -73,7 +92,17 @@ namespace dvb
 			void* previous = vtable[a_slot];
 			vtable[a_slot] = reinterpret_cast<void*>(a_hook);
 			VirtualProtect(&vtable[a_slot], sizeof(void*), oldProtect, &oldProtect);
+			const HMODULE runtime = ModuleOf(vtable);
+			g_hookSlots.push_back({ a_name, runtime && ModuleOf(previous) == runtime });
 			return reinterpret_cast<Fn>(previous);
+		}
+
+		json HooksJson()
+		{
+			json out = json::object();
+			for (const auto& slot : g_hookSlots)
+				out[slot.name] = json{ { "closestToRuntime", slot.closestToRuntime } };
+			return out;
 		}
 
 		bool BooleanArgument(const json& a_args, const char* a_name, bool a_default)
@@ -188,6 +217,8 @@ namespace dvb
 					{ "restorationAttemptActive", m_transaction.RestoreAttemptActive() },
 					{ "generation", m_transaction.Generation() },
 				};
+				if (g_vrReady.load(std::memory_order_acquire))
+					out["hooks"] = HooksJson();
 				if (m_transaction.Active()) {
 					out["owner"] = m_transaction.Owner();
 					out["surviveLifecycle"] = m_transaction.SurvivesLifecycle();
@@ -853,16 +884,16 @@ namespace dvb
 			if (!system || !compositor)
 				return false;
 
-			g_waitGetPoses = PatchSlot(compositor, kIVRCompositorWaitGetPosesSlot, &WaitGetPosesHook);
-			g_getLastPoses = PatchSlot(compositor, kIVRCompositorGetLastPosesSlot, &GetLastPosesHook);
+			g_waitGetPoses = PatchSlot(compositor, kIVRCompositorWaitGetPosesSlot, "WaitGetPoses", &WaitGetPosesHook);
+			g_getLastPoses = PatchSlot(compositor, kIVRCompositorGetLastPosesSlot, "GetLastPoses", &GetLastPosesHook);
 
-			g_getTrackingPose = PatchSlot(system, kIVRSystemGetDeviceToAbsoluteTrackingPoseSlot, &GetTrackingPoseHook);
-			g_roleIndex = PatchSlot(system, kIVRSystemGetTrackedDeviceIndexForControllerRoleSlot, &RoleIndexHook);
-			g_indexRole = PatchSlot(system, kIVRSystemGetControllerRoleForTrackedDeviceIndexSlot, &IndexRoleHook);
-			g_deviceClass = PatchSlot(system, kIVRSystemGetTrackedDeviceClassSlot, &DeviceClassHook);
-			g_connected = PatchSlot(system, kIVRSystemIsTrackedDeviceConnectedSlot, &ConnectedHook);
-			g_controllerState = PatchSlot(system, kIVRSystemGetControllerStateSlot, &ControllerStateHook);
-			g_controllerStatePose = PatchSlot(system, kIVRSystemGetControllerStateWithPoseSlot, &ControllerStatePoseHook);
+			g_getTrackingPose = PatchSlot(system, kIVRSystemGetDeviceToAbsoluteTrackingPoseSlot, "GetDeviceToAbsoluteTrackingPose", &GetTrackingPoseHook);
+			g_roleIndex = PatchSlot(system, kIVRSystemGetTrackedDeviceIndexForControllerRoleSlot, "GetTrackedDeviceIndexForControllerRole", &RoleIndexHook);
+			g_indexRole = PatchSlot(system, kIVRSystemGetControllerRoleForTrackedDeviceIndexSlot, "GetControllerRoleForTrackedDeviceIndex", &IndexRoleHook);
+			g_deviceClass = PatchSlot(system, kIVRSystemGetTrackedDeviceClassSlot, "GetTrackedDeviceClass", &DeviceClassHook);
+			g_connected = PatchSlot(system, kIVRSystemIsTrackedDeviceConnectedSlot, "IsTrackedDeviceConnected", &ConnectedHook);
+			g_controllerState = PatchSlot(system, kIVRSystemGetControllerStateSlot, "GetControllerState", &ControllerStateHook);
+			g_controllerStatePose = PatchSlot(system, kIVRSystemGetControllerStateWithPoseSlot, "GetControllerStateWithPose", &ControllerStatePoseHook);
 			return true;
 		}
 	}
@@ -929,15 +960,34 @@ namespace dvb
 		}
 	}
 
-	void MarkVRInputReady(EventBus& a_events)
+	/**
+	 * Installs the hooks once the OpenVR interfaces exist. Idempotent and safe to call
+	 * repeatedly from any thread: a platform that cannot tell when OpenVR comes up retries
+	 * until this returns true. The "unavailable" warning is logged once.
+	 */
+	bool MarkVRInputReady(EventBus& a_events)
 	{
+		std::lock_guard lock(g_installMutex);
+		if (g_vrReady.load(std::memory_order_relaxed))
+			return true;
 		VRTrackedSetManager::Get().SetEvents(a_events);
-		const bool ready = InstallHooks();
-		g_vrReady.store(ready, std::memory_order_relaxed);
-		if (ready)
-			dlog::info("devbench: atomic HMD/controller input API ready (contract v{}, OpenVR pass-through hooks)", kVRContractVersion);
-		else if (host::Get().vr)
-			dlog::warn("devbench: atomic HMD/controller input API unavailable (OpenVR interfaces not initialized)");
+		if (!InstallHooks()) {
+			static bool warned = false;
+			if (host::Get().vr && !warned) {
+				warned = true;
+				dlog::warn("devbench: atomic HMD/controller input API unavailable (OpenVR interfaces not initialized)");
+			}
+			return false;
+		}
+		g_vrReady.store(true, std::memory_order_release);
+		std::string behind;
+		for (const auto& slot : g_hookSlots)
+			if (!slot.closestToRuntime)
+				behind += std::string(behind.empty() ? "" : ", ") + slot.name;
+		dlog::info("devbench: atomic HMD/controller input API ready (contract v{}, OpenVR pass-through hooks)", kVRContractVersion);
+		if (!behind.empty())
+			dlog::warn("devbench: another hook was already on OpenVR {}; injected input there skips it", behind);
+		return true;
 	}
 
 	void ReleaseVRInputForLifecycle(const char* a_reason)

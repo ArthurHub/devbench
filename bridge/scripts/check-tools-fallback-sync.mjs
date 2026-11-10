@@ -34,6 +34,7 @@ const FALLBACKS = {
   "bridge/src/tools-fallback-fallout4.json": [
     "src/platform/fallout4/Tools_Fallout4.cpp",
     "src/platform/fallout4/Nodes_Fallout4.cpp",
+    "src/platform/fallout4/Input_Fallout4.cpp",
     "src/core/tools/GfxTools.cpp",
     ...SHARED_FILES,
   ],

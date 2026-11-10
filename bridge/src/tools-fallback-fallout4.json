@@ -276,6 +276,56 @@
         "type": "object"
       },
       "readOnly": true
+    },
+    {
+      "name": "input",
+      "description": "Synthetic VR input. action='capabilities' (default) returns the contract version, readiness, limits and supported actions; clients should check it rather than assume this tool exists. device='vrTrackedSet' (the only device on Fallout 4) replaces the HMD and both controllers at the OpenVR boundary. 'status' reports readiness, the active sequence and, per hooked OpenVR call, whether devbench sits closest to the runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on load and new game. Emits input.vrTrackedSet events.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "capabilities",
+              "status",
+              "observe",
+              "sequence",
+              "stop",
+              "releaseAll"
+            ],
+            "type": "string"
+          },
+          "controlToken": {
+            "description": "stop/releaseAll: opaque token returned by sequence start",
+            "type": "string"
+          },
+          "device": {
+            "description": "the only device on Fallout 4 (default)",
+            "enum": ["vrTrackedSet"],
+            "type": "string"
+          },
+          "frames": {
+            "description": "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes",
+            "items": {
+              "type": "object"
+            },
+            "maxItems": 60000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "owner": {
+            "description": "stable task/session owner; defaults to MCP session id or rest:anonymous",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tailMs": {
+            "description": "sequence: final-state visibility before automatic release (default 50ms)",
+            "maximum": 1000,
+            "minimum": 10,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     }
   ]
 }
