@@ -279,7 +279,7 @@
     },
     {
       "name": "input",
-      "description": "Synthetic VR input. action='capabilities' (default) returns the contract version, readiness, limits and supported actions; clients should check it rather than assume this tool exists. device='vrTrackedSet' (the only device on Fallout 4) replaces the HMD and both controllers at the OpenVR boundary. 'status' reports readiness, the active sequence and, per hooked OpenVR call, whether devbench sits closest to the runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on load and new game. Emits input.vrTrackedSet events.",
+      "description": "Synthetic VR input. action='capabilities' (default) returns the contract version, readiness, limits and supported actions; clients should check it rather than assume this tool exists. device='vrTrackedSet' (the only device on Fallout 4) replaces the HMD and both controllers at the OpenVR boundary. 'status' reports readiness, the active sequence and, per hooked OpenVR call, whether devbench sits closest to the runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on load and new game. Emits input.vrTrackedSet events. action='reach' moves one or both controllers until their wand nodes (primaryWandNode / secondaryWandNode, the in-game nodes the game places at each controller, mapped to physical left/right) sit next to a named node of the player: a VR node slot as the nodes tool names it (hmdNode, uprightHmdNode, ...), else a node of that name in the first-person skeleton, else in the body skeleton. It calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the wand and target nodes after each settle and corrects until every wand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, error, active, stopping }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both controllers like a sequence, and it ends at a load. Fingers are not driven.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -289,9 +289,18 @@
               "observe",
               "sequence",
               "stop",
-              "releaseAll"
+              "releaseAll",
+              "reach",
+              "reachStatus",
+              "reachStop"
             ],
             "type": "string"
+          },
+          "approachUnits": {
+            "description": "reach: world units behind the target, along the facing, the first approach starts from (default 15)",
+            "maximum": 200,
+            "minimum": 0,
+            "type": "number"
           },
           "controlToken": {
             "description": "stop/releaseAll: opaque token returned by sequence start",
@@ -311,17 +320,48 @@
             "minItems": 1,
             "type": "array"
           },
+          "hands": {
+            "description": "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that controller's wand next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand",
+            "type": "object"
+          },
+          "head": {
+            "description": "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters",
+            "type": "object"
+          },
+          "holdMs": {
+            "description": "reach: how long to hold the final pose (default 10000)",
+            "maximum": 1798000,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "iterations": {
+            "description": "reach: correction passes (default 4)",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
           "owner": {
             "description": "stable task/session owner; defaults to MCP session id or rest:anonymous",
             "maxLength": 128,
             "minLength": 1,
             "type": "string"
           },
+          "runId": {
+            "description": "reachStatus: the run (default the latest)",
+            "minimum": 1,
+            "type": "integer"
+          },
           "tailMs": {
             "description": "sequence: final-state visibility before automatic release (default 50ms)",
             "maximum": 1000,
             "minimum": 10,
             "type": "integer"
+          },
+          "toleranceUnits": {
+            "description": "reach: converged when each wand is within this many world units of its target (default 1)",
+            "maximum": 50,
+            "minimum": 0.05,
+            "type": "number"
           }
         },
         "type": "object"

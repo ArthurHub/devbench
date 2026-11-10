@@ -19,8 +19,8 @@ namespace vr
 // without VR input returns nullptr from the interface getters, which keeps the input API
 // reporting "not ready" instead of failing to link.
 //
-// Threading: the interface getters are callable from any thread. Everything else is called
-// on the game's main thread (the core marshals with MainThread::RunAndWait first).
+// Threading: the interface getters and ReachRestStance are callable from any thread. Everything
+// else is called on the game's main thread (the core marshals with MainThread::RunAndWait first).
 namespace dvb::vrhost
 {
 	/// The game's own OpenVR system interface (IVRSystem_019 ABI), or nullptr while unavailable.
@@ -32,6 +32,14 @@ namespace dvb::vrhost
 	/// returns the indices they had, so a Sequence can restore them. Throws ToolError(503) while
 	/// the game's controller devices are unavailable.
 	std::pair<std::uint32_t, std::uint32_t> SetControllerIndices(std::uint32_t a_left, std::uint32_t a_right);
+
+	/// Tracking-space heights, in meters, of the pose Reach calibrates around and rests in.
+	struct ReachStance
+	{
+		double eyeHeight;   ///< the injected HMD
+		double handHeight;  ///< both resting Controllers
+	};
+	ReachStance ReachRestStance();
 
 	/// World position of the in-game node Reach measures for one Controller.
 	ReachLogic::Vec3 ReachHandWorld(bool a_right);

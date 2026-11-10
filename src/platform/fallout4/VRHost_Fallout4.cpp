@@ -1,5 +1,6 @@
 #include "core/VRHost.h"
 
+#include "Tools_Fallout4.h"
 #include "core/ToolRegistry.h"
 
 #include "openvr.h"
@@ -73,18 +74,36 @@ namespace dvb::vrhost
 		return { a_left, a_right };
 	}
 
-	ReachLogic::Vec3 ReachHandWorld(bool)
+	/**
+	 * Standing: eyes at 1.65 m and hands at waist height, so a body mod such as FRIK holds the
+	 * player upright while Reach runs instead of folding the body down to a head on the floor.
+	 */
+	ReachStance ReachRestStance()
 	{
-		throw ToolError(501, "reach is not available on Fallout 4 yet");
+		return { 1.65, 1.0 };
 	}
 
-	ReachLogic::Vec3 ReachNodeWorld(const std::string&)
+	/**
+	 * Reach measures the Wand, which the game places straight from the controller pose with
+	 * no body IK, so it exists with or without FRIK.
+	 */
+	ReachLogic::Vec3 ReachHandWorld(bool a_right)
 	{
-		throw ToolError(501, "reach is not available on Fallout 4 yet");
+		const auto& t = WandNode(a_right)->world.translate;
+		return ReachLogic::Vec3{ t.x, t.y, t.z };
+	}
+
+	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name)
+	{
+		const auto& t = FindPlayerNode(a_name)->world.translate;
+		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
 
 	double PlayerYaw()
 	{
-		throw ToolError(501, "reach is not available on Fallout 4 yet");
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player)
+			throw ToolError(503, "player is not available");
+		return player->data.angle.z;
 	}
 }

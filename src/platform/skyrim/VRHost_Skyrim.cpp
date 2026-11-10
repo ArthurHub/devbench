@@ -65,6 +65,15 @@ namespace dvb::vrhost
 		return previous;
 	}
 
+	/**
+	 * Head 3 cm above the tracking origin with the hands at the origin's height: the pose
+	 * Skyrim's Reach has been verified with.
+	 */
+	ReachStance ReachRestStance()
+	{
+		return { 0.03, 0.0 };
+	}
+
 	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name)
 	{
 		auto* pc = RE::PlayerCharacter::GetSingleton();

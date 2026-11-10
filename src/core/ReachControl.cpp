@@ -36,9 +36,23 @@ namespace dvb::ReachControl
 		constexpr long        kShortHoldMs = 3000;
 		constexpr long        kSequenceTailMs = 300;
 
-		const RL::Vec3 kRestHandRight{ 0.25, 0.0, -0.3 };
-		const RL::Vec3 kRestHandLeft{ -0.25, 0.0, -0.3 };
-		const RL::Vec3 kDefaultHmd{ 0.0, 0.03, 0.0 };
+		/**
+		 * Tracking-space rest pose Reach calibrates around and returns to: the HMD over the
+		 * origin and both controllers 0.25 m to the side and 0.3 m in front, at the heights
+		 * the platform asks for (vrhost::ReachRestStance).
+		 */
+		struct RestPose
+		{
+			RL::Vec3 hmd;
+			RL::Vec3 left;
+			RL::Vec3 right;
+		};
+
+		RestPose ReadRestPose()
+		{
+			const auto stance = vrhost::ReachRestStance();
+			return RestPose{ { 0.0, stance.eyeHeight, 0.0 }, { -0.25, stance.handHeight, -0.3 }, { 0.25, stance.handHeight, -0.3 } };
+		}
 
 		struct Run
 		{
@@ -258,23 +272,24 @@ namespace dvb::ReachControl
 
 				const double   yaw = ReadPlayerYaw();
 				const RL::Vec3 facing{ std::sin(yaw), std::cos(yaw), 0.0 };
-				const RL::Pose calibHmd = RL::Upright(kDefaultHmd);
+				const RestPose rest = ReadRestPose();
+				const RL::Pose calibHmd = RL::Upright(rest.hmd);
 
 				std::optional<RL::Calibration> calLeft;
 				std::optional<RL::Calibration> calRight;
 				if (a_req.left)
-					calLeft = CalibrateHand(false, calibHmd, kRestHandLeft, kRestHandRight, kCalibrationStep, guard, a_run);
+					calLeft = CalibrateHand(false, calibHmd, rest.left, rest.right, kCalibrationStep, guard, a_run);
 				if (a_req.right)
-					calRight = CalibrateHand(true, calibHmd, kRestHandRight, kRestHandLeft, kCalibrationStep, guard, a_run);
+					calRight = CalibrateHand(true, calibHmd, rest.right, rest.left, kCalibrationStep, guard, a_run);
 
-				RL::Vec3 trackLeft = kRestHandLeft;
-				RL::Vec3 trackRight = kRestHandRight;
+				RL::Vec3 trackLeft = rest.left;
+				RL::Vec3 trackRight = rest.right;
 				if (a_req.left)
-					trackLeft = RL::TrackingFor(*calLeft, kRestHandLeft, WorldTarget(a_req.left->node, a_req.left->front, a_req.left->offset, facing));
+					trackLeft = RL::TrackingFor(*calLeft, rest.left, WorldTarget(a_req.left->node, a_req.left->front, a_req.left->offset, facing));
 				if (a_req.right)
-					trackRight = RL::TrackingFor(*calRight, kRestHandRight, WorldTarget(a_req.right->node, a_req.right->front, a_req.right->offset, facing));
+					trackRight = RL::TrackingFor(*calRight, rest.right, WorldTarget(a_req.right->node, a_req.right->front, a_req.right->offset, facing));
 
-				RL::Pose hmd = RL::Upright(kDefaultHmd);
+				RL::Pose hmd = RL::Upright(rest.hmd);
 				if (a_req.head.aim != RL::HeadTarget::Aim::kNone) {
 					RL::Vec3 aim{};
 					if (a_req.head.aim == RL::HeadTarget::Aim::kHands) {
@@ -287,8 +302,8 @@ namespace dvb::ReachControl
 					} else {
 						const bool             useRight = a_req.right.has_value();
 						const RL::Calibration& cal = useRight ? *calRight : *calLeft;
-						const RL::Vec3         rest = useRight ? kRestHandRight : kRestHandLeft;
-						aim = RL::TrackingFor(cal, rest, ReadNodeWorld(a_req.head.node));
+						const RL::Vec3         restHand = useRight ? rest.right : rest.left;
+						aim = RL::TrackingFor(cal, restHand, ReadNodeWorld(a_req.head.node));
 					}
 					RL::Vec3 pos = a_req.head.position ? *a_req.head.position : RL::Add(aim, RL::Vec3{ 0.0, a_req.head.up, a_req.head.back });
 					if (a_req.head.eyeHeight)

@@ -709,4 +709,45 @@ namespace dvb
 		nodes.readOnly = true;
 		a_registry.Register(std::move(nodes), &NodesHandler);
 	}
+
+	/**
+	 * Finds a player node by name for Reach: a VR node slot as the nodes tool names it
+	 * (hmdNode, primaryWandNode, ...), then a node of that name in the first-person skeleton,
+	 * then in the body skeleton (player 3D, which FRIK drives). Empty or refused slots and
+	 * missing skeletons are skipped. Throws ToolError(404) naming the places searched.
+	 */
+	RE::NiAVObject* FindPlayerNode(std::string_view a_name)
+	{
+		if (REL::Module::IsVR()) {
+			if (const Slot* slot = FindVRSlot(a_name)) {
+				if (auto* node = VRSlotRoot(*slot).node)
+					return node;
+			}
+		}
+		const std::string name(a_name);
+		for (const Resolved& root : { FirstPersonRoot(), PlayerRoot() }) {
+			if (!root.node)
+				continue;
+			const Search s = SearchUnder(root.node, name, {}, 1);
+			if (!s.matches.empty())
+				return s.matches.front();
+		}
+		throw ToolError(404, std::format("node '{}' not found in the VR node table, the first-person skeleton or the body skeleton", a_name));
+	}
+
+	/**
+	 * The Wand node for one physical controller. The game's primary wand follows the right
+	 * controller unless left-handed mode (bLeftHandedMode:VR) swaps them.
+	 */
+	RE::NiAVObject* WandNode(bool a_right)
+	{
+		bool leftHanded = false;
+		if (auto* setting = RE::GetINISetting("bLeftHandedMode:VR"))
+			leftHanded = setting->GetBinary();
+		const Slot* slot = FindVRSlot(a_right != leftHanded ? "primaryWandNode" : "secondaryWandNode");
+		auto*       node = slot ? VRSlotRoot(*slot).node : nullptr;
+		if (!node)
+			throw ToolError(503, std::format("the {} wand node is not available", a_right ? "right" : "left"));
+		return node;
+	}
 }

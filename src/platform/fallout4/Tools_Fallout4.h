@@ -1,5 +1,12 @@
 #pragma once
 
+#include <string_view>
+
+namespace RE
+{
+	class NiAVObject;
+}
+
 namespace dvb
 {
 	class ToolRegistry;
@@ -15,4 +22,9 @@ namespace dvb
 
 	/// Register `input` (VR tracked-set injection). Called by RegisterGameTools.
 	void RegisterInputTool(ToolRegistry& a_registry);
+
+	/// Main thread. A player node by name for Reach (Nodes_Fallout4.cpp).
+	RE::NiAVObject* FindPlayerNode(std::string_view a_name);
+	/// Main thread. The Wand node that follows one physical controller (Nodes_Fallout4.cpp).
+	RE::NiAVObject* WandNode(bool a_right);
 }
