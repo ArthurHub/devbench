@@ -1,0 +1,91 @@
+#include "core/VRHost.h"
+
+#include "core/ToolRegistry.h"
+
+#include <RE/B/BSFixedString.h>
+#include <RE/B/BSInputDeviceManager.h>
+#include <RE/B/BSOpenVR.h>
+#include <RE/N/NiAVObject.h>
+#include <RE/P/PlayerCharacter.h>
+
+#include <format>
+
+// Skyrim VR's side of the VR input seam (core/VRHost.h).
+namespace dvb::vrhost
+{
+	namespace
+	{
+		constexpr const char* kRightHandNode = "NPC R Hand [RHnd]";
+		constexpr const char* kLeftHandNode = "NPC L Hand [LHnd]";
+
+		RE::BSTrackedControllerDevice* ControllerDevice(bool a_right)
+		{
+			auto* manager = RE::BSInputDeviceManager::GetSingleton();
+			if (!manager)
+				return nullptr;
+			return a_right ? manager->GetVRControllerRight() : manager->GetVRControllerLeft();
+		}
+	}
+
+	vr::IVRSystem* System()
+	{
+		if (!REL::Module::IsVR())
+			return nullptr;
+		auto* openvr = RE::BSOpenVR::GetSingleton();
+		return openvr ? openvr->vrSystem : nullptr;
+	}
+
+	/**
+	 * The game's compositor, falling back to the one in BSOpenVR's context when the
+	 * global accessor is still null.
+	 */
+	vr::IVRCompositor* Compositor()
+	{
+		if (!REL::Module::IsVR())
+			return nullptr;
+		if (auto* compositor = RE::BSOpenVR::GetIVRCompositor())
+			return compositor;
+		auto* openvr = RE::BSOpenVR::GetSingleton();
+		return openvr ? openvr->vrContext.vrCompositor : nullptr;
+	}
+
+	/**
+	 * Rewrites the tracked-device index on BSInputDeviceManager's VR controller devices, which
+	 * is how Skyrim decides which OpenVR device feeds each hand.
+	 */
+	std::pair<std::uint32_t, std::uint32_t> SetControllerIndices(std::uint32_t a_left, std::uint32_t a_right)
+	{
+		auto* left = ControllerDevice(false);
+		auto* right = ControllerDevice(true);
+		if (!left || !right)
+			throw ToolError(503, "Skyrim VR controller devices are unavailable");
+		const std::pair previous{ left->GetRuntimeData().trackedDeviceIndex, right->GetRuntimeData().trackedDeviceIndex };
+		left->GetRuntimeData().trackedDeviceIndex = a_left;
+		right->GetRuntimeData().trackedDeviceIndex = a_right;
+		return previous;
+	}
+
+	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name)
+	{
+		auto* pc = RE::PlayerCharacter::GetSingleton();
+		auto* root = pc ? pc->Get3D(false) : nullptr;
+		auto* node = root ? root->GetObjectByName(RE::BSFixedString(a_name.c_str())) : nullptr;
+		if (!node)
+			throw ToolError(404, std::format("node '{}' not found on the player", a_name));
+		const auto& t = node->world.translate;
+		return ReachLogic::Vec3{ t.x, t.y, t.z };
+	}
+
+	ReachLogic::Vec3 ReachHandWorld(bool a_right)
+	{
+		return ReachNodeWorld(a_right ? kRightHandNode : kLeftHandNode);
+	}
+
+	double PlayerYaw()
+	{
+		auto* pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc)
+			throw ToolError(503, "player is not available");
+		return pc->GetAngleZ();
+	}
+}

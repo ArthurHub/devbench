@@ -14,12 +14,12 @@
 #include "StallWatchdog.h"
 #include "TimeScaleControl.h"
 #include "Tools.h"
-#include "VRInput.h"
 #include "Version.h"
 #include "core/Config.h"
 #include "core/GameState.h"
 #include "core/HostApi.h"
 #include "core/Server.h"
+#include "core/VRInput.h"
 #include "core/tools/CommonTools.h"
 
 #include <cstring>

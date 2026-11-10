@@ -1,11 +1,20 @@
-#include "VRInput.h"
-
-#include "ReachControl.h"
+#include "core/VRInput.h"
 
 #include "core/EventBus.h"
+#include "core/Host.h"
+#include "core/Log.h"
 #include "core/MainThread.h"
+#include "core/ReachControl.h"
 #include "core/ToolRegistry.h"
+#include "core/VRHost.h"
 #include "core/VRInputState.h"
+
+// Each platform puts one openvr.h on the include path: Skyrim through CommonLibSSE-NG,
+// Fallout 4 through the vendored copy in extern/openvr. Only the vtable slot numbers below
+// are tied to an interface version; the structs used here are the same in every version.
+#include "openvr.h"
+
+#include <Windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -19,6 +28,7 @@
 #include <random>
 #include <sstream>
 #include <thread>
+#include <tuple>
 
 namespace dvb
 {
@@ -48,6 +58,23 @@ namespace dvb
 		constexpr std::size_t kIVRSystemGetControllerStateWithPoseSlot = 35;
 
 		std::atomic<bool> g_vrReady{ false };
+
+		/**
+		 * Replaces one slot of a COM-style object's vtable and returns the previous entry.
+		 * The vtable is shared by every holder of the interface, so later hooks on the same
+		 * slot (other mods) chain to this one through the pointer they save.
+		 */
+		template <class Fn>
+		Fn PatchSlot(void* a_object, std::size_t a_slot, Fn a_hook)
+		{
+			auto** vtable = *static_cast<void***>(a_object);
+			DWORD  oldProtect = 0;
+			VirtualProtect(&vtable[a_slot], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect);
+			void* previous = vtable[a_slot];
+			vtable[a_slot] = reinterpret_cast<void*>(a_hook);
+			VirtualProtect(&vtable[a_slot], sizeof(void*), oldProtect, &oldProtect);
+			return reinterpret_cast<Fn>(previous);
+		}
 
 		bool BooleanArgument(const json& a_args, const char* a_name, bool a_default)
 		{
@@ -137,7 +164,7 @@ namespace dvb
 			static VRTrackedSetManager& Get()
 			{
 				// Deliberately process-lifetime: hook thunks and detached bounded playback workers may
-				// reference it while Skyrim is shutting down.
+				// reference it while the game is shutting down.
 				static auto* instance = new VRTrackedSetManager();
 				return *instance;
 			}
@@ -180,7 +207,7 @@ namespace dvb
 			json Start(const json& a_args, const std::string& a_owner, bool a_internal)
 			{
 				if (!g_vrReady.load(std::memory_order_relaxed))
-					throw ToolError(503, "OpenVR tracked-set injection is not ready; Skyrim VR and its OpenVR interfaces must be initialized");
+					throw ToolError(503, "OpenVR tracked-set injection is not ready; the VR game and its OpenVR interfaces must be initialized");
 				if (!a_args.contains("frames"))
 					throw ToolError(400, "VR tracked-set sequence requires 'frames'");
 				std::vector<VRTrackedInputFrame> frames;
@@ -195,7 +222,7 @@ namespace dvb
 				const bool surviveLifecycle = BooleanArgument(a_args, "surviveLifecycle", false);
 				if (surviveLifecycle && !a_internal)
 					throw ToolError(403, "'surviveLifecycle' is reserved for the internal recording-replay transaction");
-				auto* compositor = RE::BSOpenVR::GetIVRCompositor();
+				auto* compositor = vrhost::Compositor();
 				if (!compositor)
 					throw ToolError(503, "OpenVR compositor is unavailable");
 				const auto requestedOrigin = static_cast<vr::ETrackingUniverseOrigin>(frames.front().originCode);
@@ -262,7 +289,7 @@ namespace dvb
 					if (!decision.present)
 						return;
 					if (decision.preserved) {
-						logs::info("devbench: preserving owned VR tracked-set sequence '{}' across {}",
+						dlog::info("devbench: preserving owned VR tracked-set sequence '{}' across {}",
 							decision.owner, a_reason);
 						return;
 					}
@@ -280,7 +307,7 @@ namespace dvb
 							ScheduleRestorationRecovery(generation);
 					}).detach();
 				} catch (const std::exception& e) {
-					logs::warn("devbench: VR lifecycle cleanup worker could not start: {}", e.what());
+					dlog::warn("devbench: VR lifecycle cleanup worker could not start: {}", e.what());
 					ScheduleRestorationRecovery(generation);
 				}
 			}
@@ -363,15 +390,7 @@ namespace dvb
 					std::lock_guard lock(m_mutex);
 					if (!m_transaction.CanApplyIndices(a_generation))
 						return json{ { "applied", false }, { "superseded", true } };
-					auto* manager = RE::BSInputDeviceManager::GetSingleton();
-					auto* left = manager ? manager->GetVRControllerLeft() : nullptr;
-					auto* right = manager ? manager->GetVRControllerRight() : nullptr;
-					if (!left || !right)
-						throw ToolError(503, "Skyrim VR controller devices are unavailable");
-					m_previousLeftIndex = left->GetRuntimeData().trackedDeviceIndex;
-					m_previousRightIndex = right->GetRuntimeData().trackedDeviceIndex;
-					left->GetRuntimeData().trackedDeviceIndex = a_left;
-					right->GetRuntimeData().trackedDeviceIndex = a_right;
+					std::tie(m_previousLeftIndex, m_previousRightIndex) = vrhost::SetControllerIndices(a_left, a_right);
 					m_transaction.MarkIndicesApplied(a_generation);
 					return json{ { "applied", true } };
 				});
@@ -391,13 +410,7 @@ namespace dvb
 									m_transaction.Generation() != a_generation)
 									return json{ { "restored", !m_transaction.IndicesApplied() },
 										{ "superseded", true } };
-								auto* manager = RE::BSInputDeviceManager::GetSingleton();
-								auto* left = manager ? manager->GetVRControllerLeft() : nullptr;
-								auto* right = manager ? manager->GetVRControllerRight() : nullptr;
-								if (!left || !right)
-									throw ToolError(503, "Skyrim VR controller devices are unavailable during restoration");
-								left->GetRuntimeData().trackedDeviceIndex = m_previousLeftIndex;
-								right->GetRuntimeData().trackedDeviceIndex = m_previousRightIndex;
+								vrhost::SetControllerIndices(m_previousLeftIndex, m_previousRightIndex);
 								if (!m_transaction.RestoreSucceeded(a_generation))
 									return json{ { "restored", false }, { "superseded", true } };
 								completion = m_pendingCompletion;
@@ -416,16 +429,16 @@ namespace dvb
 							return true;
 					} catch (const ToolError& e) {
 						if (e.code == 503 && attempt < kControllerRestoreAttempts) {
-							logs::warn("devbench: VR tracked-set controller restoration attempt {}/{} deferred: {}",
+							dlog::warn("devbench: VR tracked-set controller restoration attempt {}/{} deferred: {}",
 								attempt, kControllerRestoreAttempts, e.what());
 							std::this_thread::sleep_for(kControllerRestoreRetryDelay);
 							continue;
 						}
-						logs::warn("devbench: VR tracked-set controller restoration remains pending after {} attempt(s): {}",
+						dlog::warn("devbench: VR tracked-set controller restoration remains pending after {} attempt(s): {}",
 							attempt, e.what());
 						break;
 					} catch (const std::exception& e) {
-						logs::warn("devbench: VR tracked-set controller restoration remains pending: {}", e.what());
+						dlog::warn("devbench: VR tracked-set controller restoration remains pending: {}", e.what());
 						break;
 					}
 				}
@@ -508,12 +521,12 @@ namespace dvb
 					std::lock_guard lock(m_mutex);
 					if (m_recoveryGeneration && *m_recoveryGeneration == a_generation)
 						m_recoveryGeneration.reset();
-					logs::warn("devbench: unable to schedule VR restoration recovery: {}", e.what());
+					dlog::warn("devbench: unable to schedule VR restoration recovery: {}", e.what());
 				} catch (...) {
 					std::lock_guard lock(m_mutex);
 					if (m_recoveryGeneration && *m_recoveryGeneration == a_generation)
 						m_recoveryGeneration.reset();
-					logs::warn("devbench: unable to schedule VR restoration recovery");
+					dlog::warn("devbench: unable to schedule VR restoration recovery");
 				}
 			}
 
@@ -561,7 +574,7 @@ namespace dvb
 						a_payload["state"] = a_state;
 						m_events->Publish("input.vrTrackedSet", std::move(a_payload));
 					} catch (const std::exception& e) {
-						logs::warn("devbench: VR tracked-set event publish failed: {}", e.what());
+						dlog::warn("devbench: VR tracked-set event publish failed: {}", e.what());
 					}
 			}
 
@@ -621,15 +634,15 @@ namespace dvb
 			vr::TrackedDeviceIndex_t, vr::VRControllerState_t*, std::uint32_t,
 			vr::TrackedDevicePose_t*);
 
-		REL::Relocation<WaitGetPosesFn>        g_waitGetPoses;
-		REL::Relocation<WaitGetPosesFn>        g_getLastPoses;
-		REL::Relocation<GetTrackingPoseFn>     g_getTrackingPose;
-		REL::Relocation<RoleIndexFn>           g_roleIndex;
-		REL::Relocation<IndexRoleFn>           g_indexRole;
-		REL::Relocation<DeviceClassFn>         g_deviceClass;
-		REL::Relocation<ConnectedFn>           g_connected;
-		REL::Relocation<ControllerStateFn>     g_controllerState;
-		REL::Relocation<ControllerStatePoseFn> g_controllerStatePose;
+		WaitGetPosesFn        g_waitGetPoses = nullptr;
+		WaitGetPosesFn        g_getLastPoses = nullptr;
+		GetTrackingPoseFn     g_getTrackingPose = nullptr;
+		RoleIndexFn           g_roleIndex = nullptr;
+		IndexRoleFn           g_indexRole = nullptr;
+		DeviceClassFn         g_deviceClass = nullptr;
+		ConnectedFn           g_connected = nullptr;
+		ControllerStateFn     g_controllerState = nullptr;
+		ControllerStatePoseFn g_controllerStatePose = nullptr;
 
 		VRTrackedPoseState ReadPose(const vr::TrackedDevicePose_t& a_pose,
 			vr::TrackedDeviceIndex_t                               a_index)
@@ -675,14 +688,11 @@ namespace dvb
 		{
 			if (!g_vrReady.load(std::memory_order_relaxed))
 				throw ToolError(503, "OpenVR tracked-set observation is not ready");
-			auto* openvr = RE::BSOpenVR::GetSingleton();
-			auto* system = openvr ? openvr->vrSystem : nullptr;
+			auto* system = vrhost::System();
 			if (!system)
 				throw ToolError(503, "OpenVR system is unavailable");
 
-			auto* compositor = RE::BSOpenVR::GetIVRCompositor();
-			if (!compositor && openvr)
-				compositor = openvr->vrContext.vrCompositor;
+			auto*                                                              compositor = vrhost::Compositor();
 			const auto                                                         origin = compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
 			std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
 			g_getTrackingPose(system, origin, 0.0f, poses.data(), static_cast<std::uint32_t>(poses.size()));
@@ -836,28 +846,23 @@ namespace dvb
 
 		bool InstallHooks()
 		{
-			if (!REL::Module::IsVR())
+			if (!host::Get().vr)
 				return false;
-			auto* openvr = RE::BSOpenVR::GetSingleton();
-			auto* system = openvr ? openvr->vrSystem : nullptr;
-			auto* compositor = RE::BSOpenVR::GetIVRCompositor();
-			if (!compositor && openvr)
-				compositor = openvr->vrContext.vrCompositor;
+			auto* system = vrhost::System();
+			auto* compositor = vrhost::Compositor();
 			if (!system || !compositor)
 				return false;
 
-			REL::Relocation<std::uintptr_t> compositorVtable{ *reinterpret_cast<std::uintptr_t*>(compositor) };
-			g_waitGetPoses = compositorVtable.write_vfunc(kIVRCompositorWaitGetPosesSlot, WaitGetPosesHook);
-			g_getLastPoses = compositorVtable.write_vfunc(kIVRCompositorGetLastPosesSlot, GetLastPosesHook);
+			g_waitGetPoses = PatchSlot(compositor, kIVRCompositorWaitGetPosesSlot, &WaitGetPosesHook);
+			g_getLastPoses = PatchSlot(compositor, kIVRCompositorGetLastPosesSlot, &GetLastPosesHook);
 
-			REL::Relocation<std::uintptr_t> systemVtable{ *reinterpret_cast<std::uintptr_t*>(system) };
-			g_getTrackingPose = systemVtable.write_vfunc(kIVRSystemGetDeviceToAbsoluteTrackingPoseSlot, GetTrackingPoseHook);
-			g_roleIndex = systemVtable.write_vfunc(kIVRSystemGetTrackedDeviceIndexForControllerRoleSlot, RoleIndexHook);
-			g_indexRole = systemVtable.write_vfunc(kIVRSystemGetControllerRoleForTrackedDeviceIndexSlot, IndexRoleHook);
-			g_deviceClass = systemVtable.write_vfunc(kIVRSystemGetTrackedDeviceClassSlot, DeviceClassHook);
-			g_connected = systemVtable.write_vfunc(kIVRSystemIsTrackedDeviceConnectedSlot, ConnectedHook);
-			g_controllerState = systemVtable.write_vfunc(kIVRSystemGetControllerStateSlot, ControllerStateHook);
-			g_controllerStatePose = systemVtable.write_vfunc(kIVRSystemGetControllerStateWithPoseSlot, ControllerStatePoseHook);
+			g_getTrackingPose = PatchSlot(system, kIVRSystemGetDeviceToAbsoluteTrackingPoseSlot, &GetTrackingPoseHook);
+			g_roleIndex = PatchSlot(system, kIVRSystemGetTrackedDeviceIndexForControllerRoleSlot, &RoleIndexHook);
+			g_indexRole = PatchSlot(system, kIVRSystemGetControllerRoleForTrackedDeviceIndexSlot, &IndexRoleHook);
+			g_deviceClass = PatchSlot(system, kIVRSystemGetTrackedDeviceClassSlot, &DeviceClassHook);
+			g_connected = PatchSlot(system, kIVRSystemIsTrackedDeviceConnectedSlot, &ConnectedHook);
+			g_controllerState = PatchSlot(system, kIVRSystemGetControllerStateSlot, &ControllerStateHook);
+			g_controllerStatePose = PatchSlot(system, kIVRSystemGetControllerStateWithPoseSlot, &ControllerStatePoseHook);
 			return true;
 		}
 	}
@@ -867,7 +872,7 @@ namespace dvb
 		return json{
 			{ "version", json{ { "major", kVRContractVersion },
 							 { "minor", kVRContractMinorVersion } } },
-			{ "available", REL::Module::IsVR() },
+			{ "available", host::Get().vr },
 			{ "ready", g_vrReady.load(std::memory_order_relaxed) },
 			{ "device", kDevice },
 			{ "atomicDevices", json::array({ "hmd", "left", "right" }) },
@@ -930,9 +935,9 @@ namespace dvb
 		const bool ready = InstallHooks();
 		g_vrReady.store(ready, std::memory_order_relaxed);
 		if (ready)
-			logs::info("devbench: atomic HMD/controller input API ready (contract v{}, OpenVR pass-through hooks)", kVRContractVersion);
-		else if (REL::Module::IsVR())
-			logs::warn("devbench: atomic HMD/controller input API unavailable (OpenVR interfaces not initialized)");
+			dlog::info("devbench: atomic HMD/controller input API ready (contract v{}, OpenVR pass-through hooks)", kVRContractVersion);
+		else if (host::Get().vr)
+			dlog::warn("devbench: atomic HMD/controller input API unavailable (OpenVR interfaces not initialized)");
 	}
 
 	void ReleaseVRInputForLifecycle(const char* a_reason)
@@ -944,7 +949,7 @@ namespace dvb
 		try {
 			VRTrackedSetManager::Get().StopForLifecycle(reason);
 		} catch (const std::exception& e) {
-			logs::warn("devbench: lifecycle VR tracked-set release failed ({}): {}", reason, e.what());
+			dlog::warn("devbench: lifecycle VR tracked-set release failed ({}): {}", reason, e.what());
 		}
 	}
 }

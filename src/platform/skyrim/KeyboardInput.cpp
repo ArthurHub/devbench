@@ -1,13 +1,13 @@
 #include "KeyboardInput.h"
 
 #include "GameClock.h"
-#include "VRInput.h"
 #include "core/EventBus.h"
 #include "core/GameState.h"
 #include "core/KeyboardInputState.h"
 #include "core/MainThread.h"
 #include "core/MainThreadTask.h"
 #include "core/ToolRegistry.h"
+#include "core/VRInput.h"
 #include "core/VRInputState.h"
 
 #include <RE/B/BSInputEventQueue.h>

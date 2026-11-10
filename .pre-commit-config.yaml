@@ -31,6 +31,8 @@ repos:
         # Restrict to C/C++; clang-format v21 errors on JSON without a Json
         # language section, and JSON is already handled by prettier below.
         types_or: [c, c++]
+        # Vendored third-party headers stay byte-for-byte as upstream ships them.
+        exclude: ^extern/openvr/
 
   - repo: https://github.com/JohnnyMorganz/stylua
     rev: v2.6.0
