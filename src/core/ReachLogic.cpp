@@ -14,9 +14,18 @@ namespace dvb::ReachLogic
 		constexpr double kDetEpsilon = 1e-6;
 		constexpr long   kFrameStepMs = 1000;
 		constexpr long   kCalibrationSettleMs = 2600;
-		constexpr int    kBlendFrames = 6;
-		constexpr long   kBlendStepMs = 300;
-		constexpr long   kBlendDurationMs = (kBlendFrames - 1) * kBlendStepMs;
+		constexpr long   kBlendStepMs = 10;
+		constexpr long   kBlendDurationMs = kApproachBlendMs;
+		constexpr int    kBlendFrames = static_cast<int>(kBlendDurationMs / kBlendStepMs) + 1;
+
+		/**
+		 * Smoothstep ease-in-out over [0,1]: the hand starts and stops at rest the way a real
+		 * reach does, instead of jerking to full speed on the first frame.
+		 */
+		double EaseInOut(double a_t)
+		{
+			return a_t * a_t * (3.0 - 2.0 * a_t);
+		}
 
 		std::string FormatNumber(double a_value)
 		{
@@ -447,7 +456,7 @@ namespace dvb::ReachLogic
 		json frames = json::array();
 		int  packet = 1;
 		for (int k = 0; k < kBlendFrames; ++k) {
-			const double t = static_cast<double>(k) / static_cast<double>(kBlendFrames - 1);
+			const double t = EaseInOut(static_cast<double>(k) / static_cast<double>(kBlendFrames - 1));
 			const Vec3   left = Add(a_leftStart, Scale(Sub(a_leftFinal, a_leftStart), t));
 			const Vec3   right = Add(a_rightStart, Scale(Sub(a_rightFinal, a_rightStart), t));
 			const long   tMs = static_cast<long>(k) * kBlendStepMs;

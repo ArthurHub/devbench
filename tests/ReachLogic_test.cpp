@@ -562,10 +562,11 @@ TEST_CASE("ApproachAndHoldFrames blends then holds")
 	Vec3 rightStart{ 0.0, 0.0, 0.0 };
 	Vec3 rightFinal{ 0.0, 10.0, 0.0 };
 	json frames = ApproachAndHoldFrames(hmd, leftStart, leftFinal, rightStart, rightFinal, 5000);
-	CHECK(frames.size() == 11);
+	CHECK(frames.size() == 156);
 	CHECK(frames[0]["tMs"] == 0);
-	CHECK(frames[5]["tMs"] == 1500);
-	CHECK(frames[6]["tMs"] == 2500);
+	CHECK(frames[1]["tMs"] == 10);
+	CHECK(frames[150]["tMs"] == 1500);
+	CHECK(frames[151]["tMs"] == 2500);
 	long previous = -1;
 	for (const json& frame : frames) {
 		long tMs = frame["tMs"].get<long>();
@@ -573,17 +574,32 @@ TEST_CASE("ApproachAndHoldFrames blends then holds")
 		previous = tMs;
 	}
 	Vec3 firstLeft = PoseTranslation(frames[0], "left");
-	Vec3 midLeft = PoseTranslation(frames[3], "left");
-	Vec3 lastBlendLeft = PoseTranslation(frames[5], "left");
-	Vec3 holdLeft = PoseTranslation(frames[6], "left");
+	Vec3 midLeft = PoseTranslation(frames[75], "left");
+	Vec3 lastBlendLeft = PoseTranslation(frames[150], "left");
+	Vec3 holdLeft = PoseTranslation(frames[151], "left");
 	CHECK(NearXYZ(firstLeft, 0.0, 0.0, 0.0));
-	CHECK(NearXYZ(midLeft, 6.0, 0.0, 0.0));
+	CHECK(NearXYZ(midLeft, 5.0, 0.0, 0.0));
 	CHECK(NearXYZ(lastBlendLeft, 10.0, 0.0, 0.0));
 	CHECK(NearXYZ(holdLeft, 10.0, 0.0, 0.0));
 	Vec3 firstRight = PoseTranslation(frames[0], "right");
-	Vec3 lastBlendRight = PoseTranslation(frames[5], "right");
+	Vec3 lastBlendRight = PoseTranslation(frames[150], "right");
 	CHECK(NearXYZ(firstRight, 0.0, 0.0, 0.0));
 	CHECK(NearXYZ(lastBlendRight, 0.0, 10.0, 0.0));
+}
+
+TEST_CASE("ApproachAndHoldFrames eases in and out without a large step")
+{
+	Pose   hmd = Upright(Vec3{ 0.0, 0.0, 0.0 });
+	Vec3   origin{ 0.0, 0.0, 0.0 };
+	Vec3   target{ 10.0, 0.0, 0.0 };
+	json   frames = ApproachAndHoldFrames(hmd, origin, target, origin, origin, 1000);
+	double firstStep = Norm(Sub(PoseTranslation(frames[1], "left"), PoseTranslation(frames[0], "left")));
+	double midStep = Norm(Sub(PoseTranslation(frames[76], "left"), PoseTranslation(frames[75], "left")));
+	double lastStep = Norm(Sub(PoseTranslation(frames[150], "left"), PoseTranslation(frames[149], "left")));
+	CHECK(firstStep < midStep);
+	CHECK(lastStep < midStep);
+	for (std::size_t i = 1; i <= 150; ++i)
+		CHECK(Norm(Sub(PoseTranslation(frames[i], "left"), PoseTranslation(frames[i - 1], "left"))) < 0.11);
 }
 
 TEST_CASE("PhaseName returns lower-camel names")

@@ -260,8 +260,16 @@ namespace dvb
 				const auto requestedOrigin = static_cast<vr::ETrackingUniverseOrigin>(frames.front().originCode);
 				if (compositor->GetTrackingSpace() != requestedOrigin)
 					throw ToolError(409, "recorded OpenVR origin does not match the compositor tracking space; select a compatible capture instead of mutating global tracking state");
+				if (a_args.contains("controlToken") && !a_args["controlToken"].is_string())
+					throw ToolError(400, "'controlToken' must be a string");
+				const std::string replaceToken = a_args.value("controlToken", std::string{});
+				if (!replaceToken.empty()) {
+					if (auto replaced = Replace(frames, tailMs, a_owner, replaceToken, surviveLifecycle))
+						return *replaced;
+				}
 
 				std::uint64_t generation;
+				std::uint64_t playback = 0;
 				const auto    frameCount = frames.size();
 				const auto    durationMs = frames.back().tMs + tailMs;
 				const auto    controlToken = CreateControlToken();
@@ -285,6 +293,9 @@ namespace dvb
 						if (!m_transaction.Commit(generation))
 							throw ToolError(409, "VR tracked-set activation was superseded");
 						started = steady_clock::now();
+						playback = ++m_playback;
+						m_leftIndex = frames.front().left.pose.index;
+						m_rightIndex = frames.front().right.pose.index;
 						m_frameIndex = 0;
 						m_frameCount = frameCount;
 						m_durationMs = durationMs;
@@ -295,9 +306,9 @@ namespace dvb
 													 { "frameCount", frameCount }, { "durationMs", durationMs },
 													 { "surviveLifecycle", surviveLifecycle } });
 					}
-					std::thread worker([this, generation, owner = a_owner,
+					std::thread worker([this, generation, playback, owner = a_owner,
 										   frames = std::move(frames), tailMs, started]() mutable {
-						Playback(generation, owner, std::move(frames), tailMs, started);
+						Playback(generation, playback, owner, std::move(frames), tailMs, started);
 					});
 					worker.detach();
 				} catch (...) {
@@ -448,16 +459,74 @@ namespace dvb
 				a_state.packetNumber += 2 * m_pressStarts[a_slot] - (inWindow ? 1 : 0);
 			}
 
-			void Playback(std::uint64_t a_generation, const std::string& a_owner,
+			/**
+			 * Swaps the running sequence's frames for new ones without releasing the devices to
+			 * the physical controllers: same transaction, owner, token and applied controller
+			 * indices; the old playback worker sees its playback number superseded and exits.
+			 * Returns nullopt when there is nothing this caller may replace, so a normal start runs.
+			 */
+			std::optional<json> Replace(std::vector<VRTrackedInputFrame>& a_frames, int a_tailMs,
+				const std::string& a_owner, const std::string& a_controlToken, bool a_surviveLifecycle)
+			{
+				const auto               frameCount = a_frames.size();
+				const auto               durationMs = a_frames.back().tMs + a_tailMs;
+				std::uint64_t            generation = 0;
+				std::uint64_t            playback = 0;
+				steady_clock::time_point started;
+				{
+					std::lock_guard lock(m_mutex);
+					if (!m_transaction.CanReplace(a_owner, a_controlToken))
+						return std::nullopt;
+					if (a_frames.front().left.pose.index != m_leftIndex ||
+						a_frames.front().right.pose.index != m_rightIndex)
+						throw ToolError(409, "replacing a running sequence keeps its controller indices; stop it to change them");
+					if (a_surviveLifecycle != m_transaction.SurvivesLifecycle())
+						throw ToolError(409, "replacing a running sequence keeps its 'surviveLifecycle'");
+					generation = m_transaction.Generation();
+					playback = ++m_playback;
+					started = steady_clock::now();
+					m_frameIndex = 0;
+					m_frameCount = frameCount;
+					m_durationMs = durationMs;
+					m_started = started;
+					m_current = a_frames.front();
+					PublishLocked("replaced", json{ { "owner", a_owner }, { "generation", generation },
+												  { "frameCount", frameCount }, { "durationMs", durationMs } });
+				}
+				m_cv.notify_all();
+				try {
+					std::thread([this, generation, playback, owner = a_owner,
+									frames = std::move(a_frames), a_tailMs, started]() mutable {
+						Playback(generation, playback, owner, std::move(frames), a_tailMs, started);
+					}).detach();
+				} catch (...) {
+					AbortActivation(generation);
+					throw;
+				}
+				return json{ { "contract", ContractJson() }, { "device", kDevice },
+					{ "action", "sequence" }, { "queued", true }, { "replaced", true }, { "owner", a_owner },
+					{ "controlToken", a_controlToken },
+					{ "generation", generation }, { "frameCount", frameCount },
+					{ "durationMs", durationMs }, { "surviveLifecycle", a_surviveLifecycle } };
+			}
+
+			/**
+			 * Plays one sequence's frames on its own thread until they and the tail run out, then
+			 * finishes the transaction. Exits quietly when the transaction ends or a replace
+			 * takes over (the generation or playback number moves on).
+			 */
+			void Playback(std::uint64_t a_generation, std::uint64_t a_playback, const std::string& a_owner,
 				std::vector<VRTrackedInputFrame> a_frames, int a_tailMs,
 				steady_clock::time_point a_started)
 			{
+				const auto superseded = [&] {
+					return !m_transaction.Active() || m_transaction.Generation() != a_generation ||
+					       m_playback != a_playback;
+				};
 				for (std::size_t i = 1; i < a_frames.size(); ++i) {
 					std::unique_lock lock(m_mutex);
 					const auto       due = a_started + milliseconds(a_frames[i].tMs);
-					if (m_cv.wait_until(lock, due, [&] {
-							return !m_transaction.Active() || m_transaction.Generation() != a_generation;
-						}))
+					if (m_cv.wait_until(lock, due, superseded))
 						return;
 					m_current = a_frames[i];
 					m_frameIndex = i;
@@ -467,14 +536,12 @@ namespace dvb
 				{
 					std::unique_lock lock(m_mutex);
 					const auto       due = a_started + milliseconds(a_frames.back().tMs + a_tailMs);
-					if (m_cv.wait_until(lock, due, [&] {
-							return !m_transaction.Active() || m_transaction.Generation() != a_generation;
-						}))
+					if (m_cv.wait_until(lock, due, superseded))
 						return;
 					completion = json{ { "owner", a_owner }, { "generation", a_generation },
 						{ "reason", "complete" }, { "completed", true }, { "frameCount", a_frames.size() } };
 				}
-				if (!Finish(a_generation, "finished", std::move(completion)))
+				if (!Finish(a_generation, "finished", std::move(completion), a_playback))
 					ScheduleRestorationRecovery(a_generation);
 			}
 
@@ -625,14 +692,22 @@ namespace dvb
 				}
 			}
 
-			bool Finish(std::uint64_t a_generation, const char* a_event, json a_completion)
+			/**
+			 * Ends the transaction for a_generation (once) and restores controller indices if they
+			 * were applied. A playback worker passes its playback number so a replace that took
+			 * over after its last wait cannot be ended by it.
+			 */
+			bool Finish(std::uint64_t a_generation, const char* a_event, json a_completion,
+				std::optional<std::uint64_t> a_playback = std::nullopt)
 			{
 				VRSequenceFinishAction action = VRSequenceFinishAction::kNone;
 				json                   completionToPublish;
 				std::string            eventToPublish;
 				{
 					std::lock_guard lock(m_mutex);
-					const bool      firstClaim = !m_transaction.TerminalClaimed();
+					if (a_playback && *a_playback != m_playback)
+						return true;
+					const bool firstClaim = !m_transaction.TerminalClaimed();
 					action = m_transaction.ClaimFinish(a_generation);
 					if (action == VRSequenceFinishAction::kNone)
 						return !m_transaction.Restoring() && !m_transaction.IndicesApplied();
@@ -680,6 +755,9 @@ namespace dvb
 			std::uint32_t                             m_previousLeftIndex = vr::k_unTrackedDeviceIndexInvalid;
 			std::uint32_t                             m_previousRightIndex = vr::k_unTrackedDeviceIndexInvalid;
 			std::string                               m_pendingTerminalEvent;
+			std::uint64_t                             m_playback = 0;
+			std::uint32_t                             m_leftIndex = vr::k_unTrackedDeviceIndexInvalid;
+			std::uint32_t                             m_rightIndex = vr::k_unTrackedDeviceIndexInvalid;
 			std::size_t                               m_frameIndex = 0;
 			std::size_t                               m_frameCount = 0;
 			std::int64_t                              m_durationMs = 0;
@@ -982,6 +1060,7 @@ namespace dvb
 			{ "controllerEncoding", "OpenVR packetNumber/pressed/touched/five x-y axes" },
 			{ "validation", "complete sequence before activation" },
 			{ "ownership", "one bounded sequence owner; start returns a required external cleanup token" },
+			{ "replace", "sequence with the running sequence's owner and controlToken swaps its frames without releasing the devices" },
 			{ "lifecyclePolicy", "default stop; recording replay may explicitly survive recorded load/new-game boundaries" },
 			{ "passThroughWhenInactive", true },
 			{ "maximumFrames", kMaximumVRTrackedFrames },

@@ -85,6 +85,7 @@ namespace dvb
 		VRSequenceLifecycleDecision CancelForLifecycle();
 		VRSequenceStopAccess        AuthorizeStop(std::string_view a_owner,
 			std::string_view a_controlToken, bool a_force, bool a_internal) const;
+		bool                        CanReplace(std::string_view a_owner, std::string_view a_controlToken) const;
 		VRSequenceFinishAction      ClaimFinish(std::uint64_t a_generation);
 		bool                        RestoreSucceeded(std::uint64_t a_generation);
 		void                        RestoreFailed(std::uint64_t a_generation);

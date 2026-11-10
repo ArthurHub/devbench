@@ -193,6 +193,36 @@ TEST_CASE("VR sequence stop authority is token and owner scoped")
 		  VRSequenceStopAccess::kAllowed);
 }
 
+TEST_CASE("VR sequence replace needs a running sequence, its owner and its token")
+{
+	VRSequenceTransaction state;
+	CHECK(!state.CanReplace("owner", "secret"));
+	CHECK(state.Begin("owner", "secret", false));
+	const auto generation = state.Generation();
+	CHECK(!state.CanReplace("owner", "secret"));
+	CHECK(state.MarkIndicesApplied(generation));
+	CHECK(state.Commit(generation));
+	CHECK(state.CanReplace("owner", "secret"));
+	CHECK(!state.CanReplace("owner", "wrong"));
+	CHECK(!state.CanReplace("owner", ""));
+	CHECK(!state.CanReplace("other", "secret"));
+	CHECK(state.Generation() == generation);
+
+	CHECK(state.ClaimFinish(generation) == VRSequenceFinishAction::kRestore);
+	CHECK(!state.CanReplace("owner", "secret"));
+}
+
+TEST_CASE("VR sequence replace is refused once lifecycle cleanup cancels it")
+{
+	VRSequenceTransaction state;
+	CHECK(state.Begin("owner", "secret", false));
+	const auto generation = state.Generation();
+	CHECK(state.MarkIndicesApplied(generation));
+	CHECK(state.Commit(generation));
+	state.CancelForLifecycle();
+	CHECK(!state.CanReplace("owner", "secret"));
+}
+
 TEST_CASE("only internal replay may survive lifecycle cleanup")
 {
 	VRSequenceTransaction state;

@@ -32,9 +32,9 @@ namespace dvb::ReachControl
 		constexpr double      kCalibrationStep = 0.2;
 		constexpr long        kIterationSettleMs = 2400;
 		constexpr long        kStopPollMs = 100;
-		constexpr long        kBetweenIterationsMs = 400;
 		constexpr long        kShortHoldMs = 3000;
 		constexpr long        kSequenceTailMs = 300;
+		constexpr long        kCalibrationTailMs = 1000;
 
 		/**
 		 * Tracking-space rest pose Reach calibrates around and returns to: the HMD over the
@@ -96,14 +96,20 @@ namespace dvb::ReachControl
 			return {};
 		}
 
-		json StartSequence(const std::string& a_owner, const json& a_frames, long a_tailMs, const ToolContext& a_ctx)
+		/**
+		 * Starts a sequence, or with a_controlToken replaces the running one in place so the
+		 * hands never fall back to the physical controllers between Reach's sequences.
+		 */
+		json StartSequence(const std::string& a_owner, const json& a_frames, long a_tailMs, const std::string& a_controlToken, const ToolContext& a_ctx)
 		{
-			const json args{
+			json args{
 				{ "action", "sequence" },
 				{ "owner", a_owner },
 				{ "frames", a_frames },
 				{ "tailMs", a_tailMs },
 			};
+			if (!a_controlToken.empty())
+				args["controlToken"] = a_controlToken;
 			return dvb::HandleVRInput(args, a_ctx);
 		}
 
@@ -125,6 +131,10 @@ namespace dvb::ReachControl
 			}
 		}
 
+		/**
+		 * Owns Reach's one sequence: each Start replaces the frames of the sequence it started
+		 * before (a fresh one if that has already run out), and Stop or destruction releases it.
+		 */
 		class SequenceGuard
 		{
 		public:
@@ -143,8 +153,7 @@ namespace dvb::ReachControl
 
 			void Start(const json& a_frames, long a_tailMs)
 			{
-				Stop();
-				const json result = StartSequence(m_owner, a_frames, a_tailMs, m_ctx);
+				const json result = StartSequence(m_owner, a_frames, a_tailMs, m_active ? m_token : std::string{}, m_ctx);
 				m_token = TokenOf(result);
 				m_active = true;
 			}
@@ -246,16 +255,16 @@ namespace dvb::ReachControl
 		{
 			const json frames = RL::CalibrationFrames(a_rightHand, a_hmd, a_rest, a_otherTracking, a_step);
 
+			// The caller replaces this sequence right after the last sample, while its last leg
+			// (and the long tail) still hold the hand, so it never falls back to the controller.
 			const auto t0 = std::chrono::steady_clock::now();
-			a_guard.Start(frames, kSequenceTailMs);
+			a_guard.Start(frames, kCalibrationTailMs);
 
 			std::array<RL::Vec3, 4> points{};
 			for (int i = 0; i < 4; ++i) {
 				SleepUntil(a_run, t0 + std::chrono::milliseconds(RL::CalibrationSampleMs(i)));
 				points[static_cast<std::size_t>(i)] = ReadHandWorld(a_rightHand);
 			}
-			SleepUntil(a_run, t0 + std::chrono::milliseconds(RL::kCalibrationTotalMs));
-			a_guard.Stop();
 
 			const auto cal = RL::CalibrationFromPoints(points, a_step);
 			if (!cal)
@@ -313,26 +322,36 @@ namespace dvb::ReachControl
 
 				SetPhase(a_run, RL::Phase::kReaching);
 
+				// Every sequence blends from where the previous one left the hands, so nothing
+				// snaps. Calibration ends with the last calibrated hand on its +z leg and the
+				// other at rest; a lead-in carries them to approachUnits behind the targets.
+				const RL::Vec3 lastLeg{ 0.0, 0.0, kCalibrationStep };
+				RL::Vec3       heldLeft = a_req.right ? rest.left : RL::Add(rest.left, lastLeg);
+				RL::Vec3       heldRight = a_req.right ? RL::Add(rest.right, lastLeg) : rest.right;
+				RL::Vec3       approachLeft = trackLeft;
+				RL::Vec3       approachRight = trackRight;
+				const RL::Vec3 back = RL::Scale(facing, -a_req.approachUnits);
+				if (a_req.left) {
+					if (const auto d = RL::TrackingDelta(*calLeft, back))
+						approachLeft = RL::Add(trackLeft, *d);
+				}
+				if (a_req.right) {
+					if (const auto d = RL::TrackingDelta(*calRight, back))
+						approachRight = RL::Add(trackRight, *d);
+				}
+				guard.Start(RL::ApproachAndHoldFrames(hmd, heldLeft, approachLeft, heldRight, approachRight, kShortHoldMs), kSequenceTailMs);
+				SleepChecked(a_run, RL::kApproachBlendMs);
+				heldLeft = approachLeft;
+				heldRight = approachRight;
+
 				const int iterations = std::max(1, a_req.iterations);
 				for (int attempt = 1; attempt <= iterations; ++attempt) {
 					const bool last = (attempt == iterations);
 					const long hold = last ? a_req.holdMs : kShortHoldMs;
 
-					RL::Vec3 startLeft = trackLeft;
-					RL::Vec3 startRight = trackRight;
-					if (attempt == 1) {
-						const RL::Vec3 back = RL::Scale(facing, -a_req.approachUnits);
-						if (a_req.left) {
-							if (const auto d = RL::TrackingDelta(*calLeft, back))
-								startLeft = RL::Add(trackLeft, *d);
-						}
-						if (a_req.right) {
-							if (const auto d = RL::TrackingDelta(*calRight, back))
-								startRight = RL::Add(trackRight, *d);
-						}
-					}
-
-					guard.Start(RL::ApproachAndHoldFrames(hmd, startLeft, trackLeft, startRight, trackRight, hold), kSequenceTailMs);
+					guard.Start(RL::ApproachAndHoldFrames(hmd, heldLeft, trackLeft, heldRight, trackRight, hold), kSequenceTailMs);
+					heldLeft = trackLeft;
+					heldRight = trackRight;
 					auto sequenceEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(RL::ApproachAndHoldDurationMs(hold));
 					SleepChecked(a_run, kIterationSettleMs);
 
@@ -353,8 +372,6 @@ namespace dvb::ReachControl
 
 					if (RL::Converged(worst, a_req.toleranceUnits)) {
 						if (!last) {
-							guard.Stop();
-							SleepChecked(a_run, kBetweenIterationsMs);
 							guard.Start(RL::ApproachAndHoldFrames(hmd, trackLeft, trackLeft, trackRight, trackRight, a_req.holdMs), kSequenceTailMs);
 							sequenceEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(RL::ApproachAndHoldDurationMs(a_req.holdMs));
 						}
@@ -373,8 +390,6 @@ namespace dvb::ReachControl
 							if (const auto d = RL::TrackingDelta(*calRight, right->error))
 								trackRight = RL::Add(trackRight, *d);
 						}
-						guard.Stop();
-						SleepChecked(a_run, kBetweenIterationsMs);
 						continue;
 					}
 

@@ -42,7 +42,9 @@ namespace dvb
 			"runtime (when false, another mod hooked that call first and injected input bypasses it). 'observe' returns "
 			"the current physical HMD and controllers as one frame. 'sequence' plays a prevalidated timestamped list of "
 			"frames, each holding the HMD, left and right poses plus both controllers' OpenVR button/touch/axis state; it "
-			"is asynchronous, has one owner, and returns a controlToken that 'stop' requires. 'releaseAll' stops this "
+			"is asynchronous, has one owner, and returns a controlToken that 'stop' requires. A 'sequence' carrying the "
+			"running sequence's controlToken replaces its frames in place, without handing the devices back to the "
+			"physical controllers in between (same controller indices required). 'releaseAll' stops this "
 			"owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on "
 			"load and new game. Emits input.vrTrackedSet events. "
 			"action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller "
@@ -68,7 +70,7 @@ namespace dvb
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
 								{ "frames", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumVRTrackedFrames }, { "description", "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes" }, { "items", json{ { "type", "object" } } } } },
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "sequence: final-state visibility before automatic release (default 50ms)" } } },
-								{ "controlToken", json{ { "type", "string" }, { "description", "stop/releaseAll: opaque token returned by sequence start" } } },
+								{ "controlToken", json{ { "type", "string" }, { "description", "stop/releaseAll: opaque token returned by sequence start. sequence: the running sequence's token replaces its frames in place" } } },
 								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
 								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
 								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },

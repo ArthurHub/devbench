@@ -106,7 +106,8 @@ namespace dvb::ReachLogic
 	inline constexpr double      kApproachMax = 200.0;
 	inline constexpr std::size_t kNodeMaxLen = 128;
 	inline constexpr long        kCalibrationLegMs = 4000;
-	inline constexpr long        kCalibrationTotalMs = 16000;
+	/// How long ApproachAndHoldFrames takes to blend from its start to its final pose.
+	inline constexpr long kApproachBlendMs = 1500;
 
 	/// Builds one vrTrackedSet frame; seq mirrors the 1-based packet number.
 	json MakeFrame(long a_tMs, int a_packet, const Pose& a_hmd, const Pose& a_left, const Pose& a_right);
@@ -116,7 +117,7 @@ namespace dvb::ReachLogic
 	long CalibrationSampleMs(int a_leg);
 	/// Milliseconds from the first frame to the last of ApproachAndHoldFrames for the same hold.
 	long ApproachAndHoldDurationMs(long a_holdMs);
-	/// Six blend frames then hold frames at the final pose.
+	/// A kApproachBlendMs eased blend at 100 Hz from start to final, then hold frames at the final pose.
 	json ApproachAndHoldFrames(const Pose& a_hmd, const Vec3& a_leftStart, const Vec3& a_leftFinal, const Vec3& a_rightStart, const Vec3& a_rightFinal, long a_holdMs);
 
 	enum class Phase

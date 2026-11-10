@@ -854,7 +854,9 @@ namespace dvb
 			"contains HMD, left-controller, and right-controller pose plus both controllers' complete "
 			"OpenVR button/touch/axis state. It is applied at the OpenVR compositor/system boundary, is "
 			"always asynchronous, has one owner, passes the real runtime through when inactive, and "
-			"returns a controlToken required for external stop. Failed controller-index restoration remains "
+			"returns a controlToken required for external stop. A sequence carrying the running sequence's "
+			"controlToken replaces its frames in place, without handing the devices back to the physical "
+			"controllers in between (same controller indices required). Failed controller-index restoration remains "
 			"retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay "
 			"may explicitly survive the load/new-game events it is reproducing. Poses only ever come from a whole "
 			"tracked-set frame, so they cannot come from different clocks; the one per-controller action is press. "
@@ -884,7 +886,7 @@ namespace dvb
 								{ "events", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumSequenceEvents }, { "description", "sequence: balanced [{action:tap|down|up|wait,key?,durationMs?,afterMs?}]" }, { "items", json{ { "type", "object" } } } } },
 								{ "frames", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumVRTrackedFrames }, { "description", "vrTrackedSet sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes" }, { "items", json{ { "type", "object" } } } } },
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "vrTrackedSet sequence: final-state visibility before automatic release (default 50ms)" } } },
-								{ "controlToken", json{ { "type", "string" }, { "description", "vrTrackedSet stop/releaseAll: opaque token returned by sequence start" } } },
+								{ "controlToken", json{ { "type", "string" }, { "description", "vrTrackedSet stop/releaseAll: opaque token returned by sequence start. sequence: the running sequence's token replaces its frames in place" } } },
 								{ "surviveLifecycle", json{ { "type", "boolean" }, { "description", "internal recording replay only; external true is rejected" } } },
 								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
 								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },

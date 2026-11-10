@@ -81,6 +81,17 @@ namespace dvb
 		return VRSequenceStopAccess::kAllowed;
 	}
 
+	/**
+	 * Whether a new sequence may take over this one's frames in place: only while it is
+	 * committed and running (not starting, finishing or restoring), and only for the caller
+	 * holding both its owner and its controlToken.
+	 */
+	bool VRSequenceTransaction::CanReplace(std::string_view a_owner, std::string_view a_controlToken) const
+	{
+		return m_active && !m_terminalClaimed && !a_controlToken.empty() &&
+		       a_controlToken == m_controlToken && a_owner == m_owner;
+	}
+
 	VRSequenceFinishAction VRSequenceTransaction::ClaimFinish(std::uint64_t a_generation)
 	{
 		if (m_generation != a_generation)
