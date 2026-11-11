@@ -816,10 +816,15 @@ namespace dvb
 			return MainThread::RunAndWait([]() -> json { return WeaponJson(RequirePlayer("weapon")); });
 		}
 
+		// How long after a call that left the weapon at rest it is made again.
+		constexpr std::chrono::milliseconds kWeaponCallRetry{ 250 };
+
 		/**
 		 * drawWeapon / sheatheWeapon: the engine's draw / sheathe call on the main thread, then
 		 * short polls from the listener thread until the state settles at drawn / sheathed or
-		 * timeoutMs passes. `outcome` is switched, already, refused or notWaited.
+		 * timeoutMs passes. The graph ignores a call made just after the previous switch settled
+		 * (the state stays at rest), so while the state is still at the starting rest the call is
+		 * made again every kWeaponCallRetry. `outcome` is switched, already, refused or notWaited.
 		 */
 		json HandleWeaponSwitch(const std::string& a_action, const json& a_args)
 		{
@@ -827,17 +832,21 @@ namespace dvb
 			const bool        wait = a_args.value("wait", true);
 			const auto        timeout = TimeoutArg(a_args);
 			const std::string target = WeaponStateName(draw ? kWeaponDrawn : kWeaponSheathed);
+			const std::string atRest = WeaponStateName(draw ? kWeaponSheathed : kWeaponDrawn);
 
-			json out = MainThread::RunAndWait([a_action, draw]() -> json {
-				auto& player = RequirePlayer(a_action);
-				if (ReadWeaponState(player) == (draw ? kWeaponDrawn : kWeaponSheathed)) {
-					json already = WeaponJson(player);
-					already["outcome"] = "already";
-					return already;
-				}
-				player.DrawWeaponMagicHands(draw);
-				return WeaponJson(player);
-			});
+			const auto call = [a_action, draw]() {
+				return MainThread::RunAndWait([a_action, draw]() -> json {
+					auto& player = RequirePlayer(a_action);
+					if (ReadWeaponState(player) == (draw ? kWeaponDrawn : kWeaponSheathed)) {
+						json already = WeaponJson(player);
+						already["outcome"] = "already";
+						return already;
+					}
+					player.DrawWeaponMagicHands(draw);
+					return WeaponJson(player);
+				});
+			};
+			json out = call();
 			out["action"] = a_action;
 			if (out.contains("outcome"))
 				return out;
@@ -849,11 +858,21 @@ namespace dvb
 
 			const auto start = std::chrono::steady_clock::now();
 			const auto deadline = start + timeout;
+			auto       lastCall = start;
+			int        calls = 1;
 			int        stalls = 0;
 			while (out["weaponState"] != target) {
 				const auto now = std::chrono::steady_clock::now();
 				if (now >= deadline)
 					break;
+				if (out["weaponState"] == atRest && now - lastCall >= kWeaponCallRetry) {
+					json again = call();
+					again.erase("outcome");  // "already": it settled between the poll and the call
+					out.update(again);
+					lastCall = std::chrono::steady_clock::now();
+					++calls;
+					continue;
+				}
 				std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(kPollInterval, deadline - now));
 				try {
 					out.update(MainThread::RunAndWait([]() -> json { return WeaponJson(RequirePlayer("wait")); }, kPollTaskTimeout));
@@ -862,6 +881,8 @@ namespace dvb
 				}
 			}
 			out["waitedMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+			if (calls > 1)
+				out["calls"] = calls;
 			if (stalls)
 				out["mainThreadStalls"] = stalls;
 			const bool switched = out["weaponState"] == target;
@@ -927,7 +948,9 @@ namespace dvb
 			">= drawn (what GetWeaponMagicDrawn means, so true for drawn fists), equipped is the weapon in hand as { name, formId } "
 			"or null for none (fists); equipped is VR only. 'drawWeapon' and 'sheatheWeapon' make the engine's own draw / sheathe "
 			"call (Actor::DrawWeaponMagicHands), then wait (wait default true) until weaponState settles at drawn / sheathed or "
-			"timeoutMs passes. They return { action, outcome, drawn, weaponState, equipped, waitedMs, mainThreadStalls?, note? }; "
+			"timeoutMs passes. The engine ignores a call made just after the previous switch settled, so while the weapon is still "
+			"at rest the call is made again every 250 ms (`calls` counts them when more than one). "
+			"They return { action, outcome, drawn, weaponState, equipped, waitedMs, calls?, mainThreadStalls?, note? }; "
 			"outcome is 'switched', 'already' (nothing was called), 'refused' (the state did not settle in time) or 'notWaited'. "
 			"sheatheWeapon also puts away drawn fists, which unequipping a weapon leaves up. 409 when no save is loaded.";
 		player.inputSchema = json{

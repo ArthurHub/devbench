@@ -488,6 +488,8 @@ irm $p -Method Post -ContentType application/json -Body '{"action":"drawWeapon",
   accepts, moves the state to `drawing` / `sheathing` in the same call. The wait then polls
   until the state settles at `drawn` / `sheathed` or `timeoutMs` passes: `outcome` is
   `switched`, `already` (nothing was called), `refused` or `notWaited` (`wait=false`).
+  The graph ignores a call made right after the previous switch settled and the state stays
+  at rest, so while it does the call is made again every 250 ms (`calls` counts them).
 - **Drawn fists**: `player.unequipitem <weapon>` leaves the player with fists up and
   `GetWeaponMagicDrawn()` true. `sheatheWeapon` is the way to put them away; FO4's Papyrus
   has no `SheatheWeapon`, and `player.cf` with an unknown function compiles and only prints
@@ -516,7 +518,9 @@ added from the console:
 - the state dword read `0x20020D` with fists drawn and `0x200201` sheathed: bits 2–4 hold the
   state, and the player's vtable slot `0xC9` is `base+0xF78D10`;
 - `player.unequipitem` on the drawn 10mm left the state `sheathed` here, so the drawn fists
-  that command can leave behind were not reproduced that way; they were made with `drawWeapon`.
+  that command can leave behind were not reproduced that way; they were made with `drawWeapon`;
+- with the assault rifle, a `sheatheWeapon` straight after a `drawWeapon` took `calls: 2`
+  and switched in 788 ms, twice in a row; each draw switched with one call in about 215 ms.
 
 On flat the state comes from the header's bitfield and there is no `equipped`; flat has never
 been loaded.
