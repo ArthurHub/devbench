@@ -736,15 +736,22 @@ namespace dvb
 	}
 
 	/**
+	 * The game's left-handed mode (bLeftHandedMode:VR), read live: it swaps which physical
+	 * controller is the primary hand.
+	 */
+	bool LeftHandedMode()
+	{
+		auto* setting = RE::GetINISetting("bLeftHandedMode:VR");
+		return setting && setting->GetBinary();
+	}
+
+	/**
 	 * The Wand node for one physical controller. The game's primary wand follows the right
 	 * controller unless left-handed mode (bLeftHandedMode:VR) swaps them.
 	 */
 	RE::NiAVObject* WandNode(bool a_right)
 	{
-		bool leftHanded = false;
-		if (auto* setting = RE::GetINISetting("bLeftHandedMode:VR"))
-			leftHanded = setting->GetBinary();
-		const Slot* slot = FindVRSlot(a_right != leftHanded ? "primaryWandNode" : "secondaryWandNode");
+		const Slot* slot = FindVRSlot(a_right != LeftHandedMode() ? "primaryWandNode" : "secondaryWandNode");
 		auto*       node = slot ? VRSlotRoot(*slot).node : nullptr;
 		if (!node)
 			throw ToolError(503, std::format("the {} wand node is not available", a_right ? "right" : "left"));

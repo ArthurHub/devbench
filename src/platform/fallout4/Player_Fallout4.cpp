@@ -3,11 +3,14 @@
 #include "core/Json.h"
 #include "core/MainThread.h"
 #include "core/ToolRegistry.h"
+#include "core/VRInput.h"
+#include "core/tools/Memory.h"
 
 #include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <format>
 #include <optional>
 #include <thread>
@@ -20,8 +23,8 @@
 // the VR address library maps it to 0x9BF5D0, the RVA F4VR-CommonFramework calls too:
 // Modding-Reference F4VR/Analysis/gold/F4VR-CommonFramework_RE_REFERENCE.md, Power Armor).
 // The switch is the console's `player.cf "Actor.SwitchToPowerArmor" <frame>` / `none`,
-// the path Immersive Flashlight's release check drives on FO4VR. Activating a frame
-// does not get the player in. The switch lands on a later frame, and the skeleton
+// the path Immersive Flashlight's release check drives on FO4VR. Activating a frame from
+// the console does not get the player in; stepIn / stepOut (below) use the controllers. The switch lands on a later frame, and the skeleton
 // swap can hold the main thread, so the wait polls from the listener thread with short
 // main-thread reads instead of blocking the main thread.
 namespace dvb
@@ -147,6 +150,32 @@ namespace dvb
 			return static_cast<float>(std::clamp(a_args.value("radius", kDefaultRadius), 1.0, kMaxRadius));
 		}
 
+		std::chrono::milliseconds TimeoutArg(const json& a_args)
+		{
+			return std::chrono::milliseconds(std::clamp(a_args.value("timeoutMs", kDefaultTimeoutMs), std::int64_t{ 0 }, kMaxTimeoutMs));
+		}
+
+		/**
+		 * Main thread. The frame a_formId names (404 / 400 when it is no frame), else the
+		 * nearest frame within a_radius of the player (404 when there is none).
+		 */
+		Frame ResolveFrame(RE::PlayerCharacter& a_player, std::optional<std::uint32_t> a_formId, float a_radius, std::string_view a_action)
+		{
+			if (a_formId) {
+				auto* ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(*a_formId);
+				if (!ref)
+					throw ToolError(404, std::format("player {}: no reference 0x{:08X}", a_action, *a_formId));
+				auto* base = FrameBase(ref);
+				if (!base)
+					throw ToolError(400, std::format("player {}: 0x{:08X} is not a power armor frame (its base has no {} keyword)", a_action, *a_formId, kFrameKeyword));
+				return { ref, base, DistanceTo(a_player, *ref) };
+			}
+			const auto found = FindFrames(a_player, a_radius);
+			if (found.empty())
+				throw ToolError(404, std::format("player {}: no power armor frame within {} units in the player's cell; pass formId or a larger radius", a_action, a_radius));
+			return found.front();
+		}
+
 		/**
 		 * Polls the player's power armor state from the listener thread until it equals
 		 * a_target or a_timeout passes. A poll the main thread does not serve in time (a
@@ -206,7 +235,7 @@ namespace dvb
 		{
 			const bool                   enter = a_action == "enterPowerArmor";
 			const bool                   wait = a_args.value("wait", true);
-			const auto                   timeout = std::chrono::milliseconds(std::clamp(a_args.value("timeoutMs", kDefaultTimeoutMs), std::int64_t{ 0 }, kMaxTimeoutMs));
+			const auto                   timeout = TimeoutArg(a_args);
 			std::optional<std::uint32_t> formId;
 			if (enter && a_args.contains("formId"))
 				formId = ParseFormId(a_args["formId"]);
@@ -220,24 +249,9 @@ namespace dvb
 				json        result = json::object();
 				std::string target = "none";
 				if (enter) {
-					RE::TESObjectREFR* ref = nullptr;
-					RE::TESFurniture*  base = nullptr;
-					if (formId) {
-						ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(*formId);
-						if (!ref)
-							throw ToolError(404, std::format("player enterPowerArmor: no reference 0x{:08X}", *formId));
-						base = FrameBase(ref);
-						if (!base)
-							throw ToolError(400, std::format("player enterPowerArmor: 0x{:08X} is not a power armor frame (its base has no {} keyword)", *formId, kFrameKeyword));
-					} else {
-						const auto found = FindFrames(player, radius);
-						if (found.empty())
-							throw ToolError(404, std::format("player enterPowerArmor: no power armor frame within {} units in the player's cell; pass formId or a larger radius", radius));
-						ref = found.front().ref;
-						base = found.front().base;
-					}
-					result["frame"] = FrameToJson(*ref, *base, DistanceTo(player, *ref));
-					target = std::format("{:08X}", ref->GetFormID());
+					const Frame frame = ResolveFrame(player, formId, radius, a_action);
+					result["frame"] = FrameToJson(*frame.ref, *frame.base, frame.distance);
+					target = std::format("{:08X}", frame.ref->GetFormID());
 				}
 				const auto command = std::format("player.cf \"Actor.SwitchToPowerArmor\" {}", target);
 				const auto console = RunConsoleCapture(command, kCommandMaxLines);
@@ -265,14 +279,461 @@ namespace dvb
 			if (!switched) {
 				out["note"] = std::format(
 					"the player is still {} power armor after {} ms. The switch was refused or has not finished: a mod can "
-					"block it (KabutoVR blocks the scripted exit), `lines` holds what the command printed, and a Papyrus "
-					"error goes to the Papyrus log",
+					"block it, `lines` holds what the command printed, and a Papyrus error goes to the Papyrus log",
 					enter ? "out of" : "in", timeout.count());
 			}
 			return out;
 		}
 
-		json HandlePlayer(const json& a_args, const ToolContext&)
+		// ---- stepIn / stepOut: the transition a player makes, through the controllers --------
+		//
+		// stepIn stands the player behind the frame, points the primary wand at it and taps A,
+		// so the game runs its own activation, walk-in and animation. stepOut holds the
+		// secondary hand's A/X button, the exit gesture measured in a setup with KabutoVR
+		// loaded (a held A on the primary hand did nothing there). Both drive the VR input
+		// tool's tracked-set contract as the owner kInputOwner and release it when done.
+		//
+		// The aim is checked, not assumed: the primary wand's ViewCaster keeps the reference its
+		// activation ray is on. ViewCasterBase::QActivatePickRef (0x9D0CE0; Modding-Reference
+		// F4VR/Analysis/silver/F4VRControlsConfig_RE_REFERENCE.md, with the caster pointer at
+		// 0x5AC72B0) returns it through vtable slot 2, which, disassembled on 1.2.72, answers
+		// the record at +0x90 while the byte at +0xD0 is set; the record starts with the
+		// ObjectRefHandle. Measured live (2026-11-10): the handle at +0x90 turned non-zero once
+		// the right wand pointed at a frame, and one A tap then took the player in.
+
+		constexpr std::uintptr_t kPrimaryViewCasterHolder = 0x5AC72B0;
+		constexpr std::uintptr_t kPrimaryPickSlotRVA = 0x9D5780;  // the primary caster's vtable slot 2
+		constexpr std::uintptr_t kPickHandleOffset = 0x90;
+		constexpr std::uintptr_t kPickValidOffset = 0xD0;
+
+		constexpr const char*               kInputOwner = "devbench.player";
+		constexpr double                    kBehindFrameUnits = 70.0;
+		constexpr std::chrono::milliseconds kSettle{ 300 };
+		constexpr std::int64_t              kRigHoldMs = 120000;
+		constexpr std::int64_t              kActivateTapMs = 150;
+		constexpr std::chrono::milliseconds kTapRetry{ 1500 };
+		constexpr std::chrono::milliseconds kSettlePoll{ 100 };
+		constexpr std::chrono::milliseconds kSettleLimit{ 2000 };
+		constexpr std::int64_t              kExitHoldMs = 2000;
+		constexpr double                    kPi = 3.14159265358979323846;
+
+		double WrapAngle(double a_radians)
+		{
+			while (a_radians > kPi)
+				a_radians -= 2.0 * kPi;
+			while (a_radians < -kPi)
+				a_radians += 2.0 * kPi;
+			return a_radians;
+		}
+
+		/**
+		 * Game yaw of the direction (a_dx, a_dy): 0 = +Y, increasing clockwise seen from above.
+		 */
+		double GameYaw(double a_dx, double a_dy)
+		{
+			return std::atan2(a_dx, a_dy);
+		}
+
+		double Degrees(double a_radians)
+		{
+			return std::round(a_radians * 1800.0 / kPi) / 10.0;
+		}
+
+		/**
+		 * Main thread. The ObjectRefHandle value the primary wand's activation ray is on, 0 for
+		 * nothing. The ViewCaster is identified by its vtable slot 2 before anything else is read,
+		 * so a different runtime fails with a diagnostic instead of reading a wrong layout.
+		 */
+		std::uint32_t ReadPrimaryWandPick()
+		{
+			const auto     base = REL::Module::get().base();
+			std::uintptr_t caster = 0;
+			std::uintptr_t vtable = 0;
+			std::uintptr_t slot2 = 0;
+			if (!mem::SafeRead(reinterpret_cast<const void*>(base + kPrimaryViewCasterHolder), &caster, sizeof(caster)) || caster < 0x10000 ||
+				!mem::SafeRead(reinterpret_cast<const void*>(caster), &vtable, sizeof(vtable)) ||
+				!mem::SafeRead(reinterpret_cast<const void*>(vtable + 0x10), &slot2, sizeof(slot2)) || slot2 != base + kPrimaryPickSlotRVA)
+				throw ToolError(500, std::format("player stepIn: the primary wand's ViewCaster at [base+0x{:X}] did not validate (caster 0x{:X}, "
+												 "vtable slot 2 0x{:X}, expected base+0x{:X}); this runtime's layout is not the measured one",
+										 kPrimaryViewCasterHolder, caster, slot2, kPrimaryPickSlotRVA));
+			std::uint8_t  valid = 0;
+			std::uint32_t handle = 0;
+			if (!mem::SafeRead(reinterpret_cast<const void*>(caster + kPickValidOffset), &valid, sizeof(valid)) ||
+				!mem::SafeRead(reinterpret_cast<const void*>(caster + kPickHandleOffset), &handle, sizeof(handle)))
+				throw ToolError(500, "player stepIn: the primary wand's pick record could not be read");
+			return valid ? handle : 0;
+		}
+
+		/**
+		 * Main thread. The reference an ObjectRefHandle value names, as "0x<formId>", or null.
+		 */
+		json HandleToJson(std::uint32_t a_handle)
+		{
+			if (!a_handle)
+				return nullptr;
+			RE::ObjectRefHandle handle;
+			static_assert(sizeof(handle) == sizeof(a_handle));
+			std::memcpy(&handle, &a_handle, sizeof(a_handle));
+			const auto ref = handle.get();
+			return ref ? json(std::format("0x{:08X}", ref->GetFormID())) : json(std::format("handle 0x{:X}", a_handle));
+		}
+
+		struct DeviceState
+		{
+			std::uint32_t index;
+			std::uint64_t packet;
+		};
+
+		/**
+		 * One tracked device's pose: rotated by a_yaw about tracking +Y, at a_pos rotated the
+		 * same way, so the whole rig turns about the tracking origin.
+		 */
+		json RigPose(std::uint32_t a_index, double a_yaw, double a_x, double a_y, double a_z)
+		{
+			const double c = std::cos(a_yaw);
+			const double s = std::sin(a_yaw);
+			return json{
+				{ "index", a_index },
+				{ "available", true },
+				{ "connected", true },
+				{ "valid", true },
+				{ "trackingResult", 200 },
+				{ "matrix", json::array({ c, 0.0, s, c * a_x + s * a_z, 0.0, 1.0, 0.0, a_y, -s, 0.0, c, -s * a_x + c * a_z }) },
+				{ "velocity", json::array({ 0.0, 0.0, 0.0 }) },
+				{ "angularVelocity", json::array({ 0.0, 0.0, 0.0 }) },
+			};
+		}
+
+		json RigController(std::uint64_t a_packet)
+		{
+			const json zero = json::array({ 0.0, 0.0 });
+			return json{ { "packetNumber", a_packet }, { "pressed", 0 }, { "touched", 0 }, { "axes", json::array({ zero, zero, zero, zero, zero }) } };
+		}
+
+		/**
+		 * The injected standing pose for stepIn / stepOut, owned for the lifetime of this object:
+		 * the HMD at eye height and both controllers held in front, the right one straight ahead
+		 * of the head so its ray passes over the tracking origin. Turn() swaps the whole rig's
+		 * yaw in place; the destructor hands the devices back.
+		 */
+		class ControllerRig
+		{
+		public:
+			/**
+			 * Takes the device indices and packet numbers from the physical tracked set. A device
+			 * that reports no index (a controller switched off or asleep) gets the lowest index
+			 * nobody else uses: the game's controllers are pointed at whatever index is injected.
+			 */
+			explicit ControllerRig(const ToolContext& a_ctx) :
+				_ctx(a_ctx)
+			{
+				const json  observed = HandleVRInput(json{ { "action", "observe" }, { "device", "vrTrackedSet" } }, _ctx);
+				const auto& frame = observed.at("frame");
+				auto        indexOf = [&](const char* a_device) -> std::optional<std::uint32_t> {
+					const auto& device = frame.at(a_device);
+					if (device.contains("index") && device["index"].is_number_unsigned())
+						return device["index"].get<std::uint32_t>();
+					return std::nullopt;
+				};
+				const auto                 hmd = indexOf("hmd");
+				const auto                 left = indexOf("left");
+				const auto                 right = indexOf("right");
+				std::vector<std::uint32_t> used;
+				for (const auto& index : { hmd, left, right }) {
+					if (index)
+						used.push_back(*index);
+				}
+				auto pick = [&](std::optional<std::uint32_t> a_index) {
+					if (a_index)
+						return *a_index;
+					std::uint32_t free = 0;
+					while (std::ranges::find(used, free) != used.end())
+						++free;
+					used.push_back(free);
+					return free;
+				};
+				auto packetOf = [&](const char* a_device) {
+					return frame.at(a_device).at("controller").value("packetNumber", std::uint64_t{ 0 });
+				};
+				_hmd = pick(hmd);
+				_right = { pick(right), packetOf("right") };
+				_left = { pick(left), packetOf("left") };
+			}
+
+			~ControllerRig()
+			{
+				if (_token.empty())
+					return;
+				try {
+					HandleVRInput(json{ { "action", "stop" }, { "device", "vrTrackedSet" }, { "owner", kInputOwner }, { "controlToken", _token } }, _ctx);
+				} catch (...) {
+					// the sequence may already have ended; nothing is left to hand back
+				}
+			}
+
+			ControllerRig(const ControllerRig&) = delete;
+			ControllerRig& operator=(const ControllerRig&) = delete;
+
+			/**
+			 * Holds the rig at a_yaw (radians about tracking +Y) and lets it settle.
+			 */
+			void Turn(double a_yaw)
+			{
+				json frames = json::array({ PoseFrame(0, a_yaw), PoseFrame(kRigHoldMs, a_yaw) });
+				json args{ { "action", "sequence" }, { "device", "vrTrackedSet" }, { "owner", kInputOwner }, { "frames", std::move(frames) } };
+				if (!_token.empty())
+					args["controlToken"] = _token;
+				_token = HandleVRInput(args, _ctx).at("controlToken").get<std::string>();
+				std::this_thread::sleep_for(kSettle);
+			}
+
+			/**
+			 * Holds the A/X button of one physical controller for a_ms, over the held pose.
+			 */
+			void PressA(bool a_right, std::int64_t a_ms)
+			{
+				HandleVRInput(json{ { "action", "press" }, { "device", "vrTrackedSet" }, { "owner", kInputOwner }, { "hand", a_right ? "right" : "left" },
+								  { "buttons", json::array({ "a" }) }, { "durationMs", a_ms } },
+					_ctx);
+			}
+
+		private:
+			json PoseFrame(std::int64_t a_tMs, double a_yaw)
+			{
+				json left = RigPose(_left.index, a_yaw, -0.25, 1.0, -0.15);
+				left["controller"] = RigController(++_left.packet);
+				json right = RigPose(_right.index, a_yaw, 0.0, 1.3, -0.35);
+				right["controller"] = RigController(++_right.packet);
+				return json{ { "tMs", a_tMs }, { "originCode", 1 }, { "hmd", RigPose(_hmd, a_yaw, 0.0, 1.65, 0.0) }, { "left", std::move(left) }, { "right", std::move(right) } };
+			}
+
+			const ToolContext& _ctx;
+			std::uint32_t      _hmd = 0;
+			DeviceState        _left{};
+			DeviceState        _right{};
+			std::string        _token;
+		};
+
+		/**
+		 * What one aim check saw: the primary wand's world yaw and position, and its pick.
+		 */
+		struct AimRead
+		{
+			double        wandYaw;
+			double        wandX;
+			double        wandY;
+			std::uint32_t pick;
+		};
+
+		AimRead ReadAim(bool a_primaryRight)
+		{
+			const json r = MainThread::RunAndWait([a_primaryRight]() -> json {
+				auto* wand = WandNode(a_primaryRight);
+				// The activation ray runs along the wand's local +Y, which in the world is the
+				// rotation's second ROW (entry[1][0], entry[1][1]). The second column is the same
+				// direction mirrored across world Y: it agreed only for frames lying along +Y and
+				// sent the aim the wrong way for a frame at 231 degrees (measured live, 2026-11-10).
+				const auto& m = wand->world.rotate;
+				return json{ { "yaw", GameYaw(m.entry[1][0], m.entry[1][1]) }, { "x", wand->world.translate.x }, { "y", wand->world.translate.y },
+					{ "pick", ReadPrimaryWandPick() } };
+			});
+			return { r["yaw"].get<double>(), r["x"].get<double>(), r["y"].get<double>(), r["pick"].get<std::uint32_t>() };
+		}
+
+		/**
+		 * Reads the aim until two reads kSettlePoll apart agree, up to kSettleLimit. The first
+		 * injection after a load takes longer than kSettle to reach the wand (measured live: one
+		 * read after it came back 38 degrees short of the turn).
+		 */
+		AimRead ReadSettledAim(bool a_primaryRight)
+		{
+			AimRead    last = ReadAim(a_primaryRight);
+			const auto until = std::chrono::steady_clock::now() + kSettleLimit;
+			while (std::chrono::steady_clock::now() < until) {
+				std::this_thread::sleep_for(kSettlePoll);
+				const AimRead next = ReadAim(a_primaryRight);
+				const bool    still = std::abs(WrapAngle(next.wandYaw - last.wandYaw)) < 0.01 &&
+				                      std::abs(next.wandX - last.wandX) < 0.5 && std::abs(next.wandY - last.wandY) < 0.5;
+				last = next;
+				if (still)
+					break;
+			}
+			return last;
+		}
+
+		/**
+		 * Turns the rig until the primary wand's activation ray is on the frame. It learns which
+		 * way a tracking-space turn moves the wand in the world from one 90-degree turn, steers
+		 * the wand at the frame for up to three passes, then sweeps up to 30 degrees either side.
+		 * Returns { matched, yawDeg, passes:[{ yawDeg, wandYawDeg, wandErrorDeg, pick }] }.
+		 */
+		json AimAtFrame(ControllerRig& a_rig, bool a_primaryRight, std::uint32_t a_frameHandle, double a_frameX, double a_frameY)
+		{
+			json passes = json::array();
+			auto record = [&](double a_yaw, const AimRead& a_read) {
+				const double error = WrapAngle(GameYaw(a_frameX - a_read.wandX, a_frameY - a_read.wandY) - a_read.wandYaw);
+				json         pick = MainThread::RunAndWait([handle = a_read.pick]() -> json { return HandleToJson(handle); });
+				passes.push_back(json{ { "yawDeg", Degrees(a_yaw) }, { "wandYawDeg", Degrees(a_read.wandYaw) }, { "wandErrorDeg", Degrees(error) }, { "pick", std::move(pick) } });
+				return error;
+			};
+
+			a_rig.Turn(0.0);
+			const AimRead start = ReadSettledAim(a_primaryRight);
+			record(0.0, start);
+			if (start.pick == a_frameHandle)
+				return json{ { "matched", true }, { "yawDeg", 0.0 }, { "passes", std::move(passes) } };
+			a_rig.Turn(kPi / 2.0);
+			AimRead      read = ReadSettledAim(a_primaryRight);
+			const double turned = WrapAngle(read.wandYaw - start.wandYaw);
+			if (std::abs(std::abs(turned) - kPi / 2.0) > 0.5)
+				throw ToolError(500, std::format("player stepIn: a 90-degree turn of the injected controllers turned the wand {} degrees; the wand "
+												 "is not following the injected pose (is another mod moving it?)",
+										 Degrees(turned)));
+			// +1 when a positive tracking yaw turns the wand clockwise in the world
+			const double sign = turned > 0.0 ? 1.0 : -1.0;
+			double       yaw = kPi / 2.0;
+			double       error = record(yaw, read);
+
+			for (int pass = 0; pass < 3 && read.pick != a_frameHandle; ++pass) {
+				yaw = WrapAngle(yaw + sign * error);
+				a_rig.Turn(yaw);
+				read = ReadSettledAim(a_primaryRight);
+				error = record(yaw, read);
+			}
+			const double aimed = yaw;
+			for (const double offsetDeg : { 10.0, -10.0, 20.0, -20.0, 30.0, -30.0 }) {
+				if (read.pick == a_frameHandle)
+					break;
+				yaw = WrapAngle(aimed + offsetDeg * kPi / 180.0);
+				a_rig.Turn(yaw);
+				read = ReadSettledAim(a_primaryRight);
+				record(yaw, read);
+			}
+			return json{ { "matched", read.pick == a_frameHandle }, { "yawDeg", Degrees(yaw) }, { "passes", std::move(passes) } };
+		}
+
+		/**
+		 * stepIn: stand behind the frame, aim the primary wand at it, tap A, wait for the state.
+		 */
+		json HandleStepIn(const json& a_args, const ToolContext& a_ctx)
+		{
+			if (!REL::Module::IsVR())
+				throw ToolError(501, "player stepIn: drives the VR controllers, so it runs on Fallout 4 VR only; use enterPowerArmor");
+			std::optional<std::uint32_t> formId;
+			if (a_args.contains("formId"))
+				formId = ParseFormId(a_args["formId"]);
+			const float radius = RadiusArg(a_args);
+			const auto  timeout = TimeoutArg(a_args);
+			// read the tracked set before anything moves, so a failure here leaves the player be
+			ControllerRig rig(a_ctx);
+
+			// Stand the player kBehindFrameUnits behind the frame, facing the way it faces: the
+			// frame opens at the back, which is where a player walks in from.
+			json placed = MainThread::RunAndWait([formId, radius]() -> json {
+				auto& player = RequirePlayer("stepIn");
+				if (InPowerArmor(player))
+					return json{ { "outcome", "already" }, { "inPowerArmor", true } };
+				const Frame  frame = ResolveFrame(player, formId, radius, "stepIn");
+				const auto   pos = frame.ref->GetPosition();
+				const double facing = frame.ref->data.angle.z;
+				const double x = pos.x - std::sin(facing) * kBehindFrameUnits;
+				const double y = pos.y - std::cos(facing) * kBehindFrameUnits;
+				const auto   command = std::format("player.setpos x {:.2f}; player.setpos y {:.2f}; player.setpos z {:.2f}; player.setangle z {:.2f}",
+					x, y, pos.z, Degrees(facing));
+				const json   console = RunConsoleCapture(command, kCommandMaxLines);
+				if (!console.value("compiled", false))
+					throw ToolError(500, std::format("player stepIn: placing the player did not compile: {}", console.value("lines", json::array()).dump()));
+				return json{
+					{ "frame", FrameToJson(*frame.ref, *frame.base, frame.distance) },
+					{ "frameHandle", frame.ref->GetHandle().native_handle() },
+					{ "frameX", pos.x },
+					{ "frameY", pos.y },
+					{ "primaryRight", !LeftHandedMode() },
+				};
+			});
+			json out{ { "action", "stepIn" } };
+			if (placed.contains("outcome")) {
+				out.update(placed);
+				return out;
+			}
+			out["frame"] = placed["frame"];
+
+			const bool primaryRight = placed["primaryRight"].get<bool>();
+			json       aim = AimAtFrame(rig, primaryRight, placed["frameHandle"].get<std::uint32_t>(), placed["frameX"].get<double>(), placed["frameY"].get<double>());
+			const bool aimed = aim["matched"].get<bool>();
+			out["aim"] = std::move(aim);
+			if (!aimed) {
+				out["outcome"] = "notAimed";
+				out["inPowerArmor"] = false;
+				out["note"] = "the primary wand's activation ray never landed on the frame, so A was not pressed; aim.passes shows where it pointed and what it picked";
+				return out;
+			}
+			// A tap with the wand on the frame was lost twice in live runs (no walk-in, no state
+			// change), both right after a stepOut; later immediate stepOut / stepIn cycles worked
+			// on the first tap, so the cause is unknown. A tap that works flips the state within
+			// about 250 ms, so one with no flip after kTapRetry is tapped again while the wand is
+			// still on the frame.
+			const auto frameHandle = placed["frameHandle"].get<std::uint32_t>();
+			const auto start = std::chrono::steady_clock::now();
+			const auto deadline = start + timeout;
+			int        taps = 0;
+			int        stalls = 0;
+			bool       in = false;
+			for (;;) {
+				rig.PressA(primaryRight, kActivateTapMs);
+				++taps;
+				const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+				const json waited = WaitForPowerArmor(true, std::clamp(remaining, std::chrono::milliseconds(0), kTapRetry));
+				in = waited["inPowerArmor"].get<bool>();
+				stalls += waited.value("mainThreadStalls", 0);
+				if (in || std::chrono::steady_clock::now() >= deadline)
+					break;
+				if (ReadAim(primaryRight).pick != frameHandle) {
+					out["note"] = "the wand left the frame between taps (the player moved?), so it was not tapped again";
+					break;
+				}
+			}
+			out["inPowerArmor"] = in;
+			out["taps"] = taps;
+			out["waitedMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+			if (stalls)
+				out["mainThreadStalls"] = stalls;
+			out["outcome"] = in ? "switched" : "refused";
+			if (!in && !out.contains("note"))
+				out["note"] = std::format("the wand was on the frame and A was tapped {} times, but the player was not in power armor after {} ms", taps, timeout.count());
+			return out;
+		}
+
+		/**
+		 * stepOut: hold the secondary hand's A/X button and wait for the state.
+		 */
+		json HandleStepOut(const json& a_args, const ToolContext& a_ctx)
+		{
+			if (!REL::Module::IsVR())
+				throw ToolError(501, "player stepOut: drives the VR controllers, so it runs on Fallout 4 VR only; use exitPowerArmor");
+			const auto timeout = TimeoutArg(a_args);
+			const json state = MainThread::RunAndWait([]() -> json {
+				auto& player = RequirePlayer("stepOut");
+				return json{ { "inPowerArmor", InPowerArmor(player) }, { "primaryRight", !LeftHandedMode() } };
+			});
+			json       out{ { "action", "stepOut" } };
+			if (!state["inPowerArmor"].get<bool>()) {
+				out["outcome"] = "already";
+				out["inPowerArmor"] = false;
+				return out;
+			}
+			ControllerRig rig(a_ctx);
+			rig.Turn(0.0);
+			rig.PressA(!state["primaryRight"].get<bool>(), kExitHoldMs);
+			out.update(WaitForPowerArmor(false, std::chrono::milliseconds(kExitHoldMs) + timeout));
+			const bool in = out["inPowerArmor"].get<bool>();
+			out["outcome"] = in ? "refused" : "switched";
+			if (in)
+				out["note"] = std::format("the secondary hand's A/X was held {} ms and the player was still in power armor; the exit gesture may differ in this setup", kExitHoldMs);
+			return out;
+		}
+
+		json HandlePlayer(const json& a_args, const ToolContext& a_ctx)
 		{
 			if (!a_args.is_object())
 				throw ToolError(400, "player arguments must be an object");
@@ -283,7 +744,11 @@ namespace dvb
 				return HandleFind(a_args);
 			if (action == "enterPowerArmor" || action == "exitPowerArmor")
 				return HandleSwitch(action, a_args);
-			throw ToolError(400, std::format("player: unknown action '{}' (status|findPowerArmor|enterPowerArmor|exitPowerArmor)", action));
+			if (action == "stepIn")
+				return HandleStepIn(a_args, a_ctx);
+			if (action == "stepOut")
+				return HandleStepOut(a_args, a_ctx);
+			throw ToolError(400, std::format("player: unknown action '{}' (status|findPowerArmor|enterPowerArmor|exitPowerArmor|stepIn|stepOut)", action));
 		}
 	}
 
@@ -301,17 +766,26 @@ namespace dvb
 			"none, then wait (wait default true) until the engine state flips or timeoutMs (default 10000, max 60000) "
 			"passes, polling short main-thread reads so the skeleton swap is never blocked. Returns { action, frame?, "
 			"command, compiled, lines, inPowerArmor, waitedMs, mainThreadStalls?, outcome, note? }; outcome is 'switched', "
-			"'already' (nothing was run), 'refused' (the state did not change in time: KabutoVR blocks the scripted exit) "
-			"or 'notWaited'. 409 when no save is loaded.";
+			"'already' (nothing was run), 'refused' (the state did not change in time; a mod can block it) or 'notWaited'. "
+			"Those two are instant setup, not the transition a player makes. 'stepIn' and 'stepOut' (VR only) make that "
+			"transition through the controllers, so the game runs its own activation, walk-in and animations: stepIn "
+			"(formId / radius as for enterPowerArmor) stands the player 70 units behind the frame facing it, injects a "
+			"standing pose through the input tool (owner devbench.player; 409 while another owner holds it), turns it until "
+			"the primary wand's activation ray is on the frame (read from the wand's ViewCaster), taps A on the primary hand "
+			"and waits, tapping again every 1.5 s while the state has not flipped (a tap was "
+			"lost twice in live runs, cause unknown); stepOut holds the secondary hand's A/X button for 2 s and waits. Both hand the controllers back when "
+			"done. They return { action, frame?, aim?: { matched, yawDeg, passes:[{ yawDeg, wandYawDeg, wandErrorDeg, pick }] }, "
+			"inPowerArmor, taps?, waitedMs, outcome, note? }, outcome as above plus 'notAimed' (the ray never landed on the frame, "
+			"so nothing was pressed). The exit gesture was measured with KabutoVR loaded. 409 when no save is loaded.";
 		player.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "status", "findPowerArmor", "enterPowerArmor", "exitPowerArmor" }) }, { "description", "default 'status'" } } },
-								{ "formId", json{ { "type", "string" }, { "description", "enterPowerArmor: the frame reference, hex (\"0x0001F2A3\"), as findPowerArmor lists it; default the nearest frame within radius" } } },
-								{ "radius", json{ { "type", "number" }, { "minimum", 1 }, { "maximum", kMaxRadius }, { "description", "findPowerArmor / enterPowerArmor without formId: how far to look, in game units (default 500)" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "status", "findPowerArmor", "enterPowerArmor", "exitPowerArmor", "stepIn", "stepOut" }) }, { "description", "default 'status'" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "enterPowerArmor / stepIn: the frame reference, hex (\"0x0001F2A3\"), as findPowerArmor lists it; default the nearest frame within radius" } } },
+								{ "radius", json{ { "type", "number" }, { "minimum", 1 }, { "maximum", kMaxRadius }, { "description", "findPowerArmor, or enterPowerArmor / stepIn without formId: how far to look, in game units (default 500)" } } },
 								{ "limit", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxLimit }, { "description", "findPowerArmor: most frames to list (default 5)" } } },
 								{ "wait", json{ { "type", "boolean" }, { "description", "enterPowerArmor / exitPowerArmor: wait for the engine state to flip (default true)" } } },
-								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxTimeoutMs }, { "description", "enterPowerArmor / exitPowerArmor: how long to wait (default 10000)" } } },
+								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxTimeoutMs }, { "description", "enterPowerArmor / exitPowerArmor / stepIn / stepOut: how long to wait for the state (default 10000; stepOut adds its 2 s hold)" } } },
 							} },
 		};
 		a_registry.Register(std::move(player), &HandlePlayer);

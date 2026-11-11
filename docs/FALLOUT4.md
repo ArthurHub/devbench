@@ -108,7 +108,7 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (switch at once, then wait for the engine state; `outcome` is `switched`, `already`, `refused` or `notWaited`). See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (instant setup through the console), `stepIn` / `stepOut` (VR: the transition a player makes, through the controllers). Each switch waits for the engine state. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 `memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
@@ -401,38 +401,69 @@ installed):
 ## `player`, the short version
 
 Puts the player in and out of a power armor frame so a test can set up power armor without
-a headset.
+a headset, either instantly (`enterPowerArmor` / `exitPowerArmor`) or the way a player does it,
+through the controllers (`stepIn` / `stepOut`).
 
 ```powershell
 $p = "http://127.0.0.1:8931/api/tool/player"
 irm $p -Method Post -ContentType application/json -Body '{"action":"findPowerArmor","radius":1000}'
-irm $p -Method Post -ContentType application/json -Body '{"action":"enterPowerArmor"}'   # nearest frame
+irm $p -Method Post -ContentType application/json -Body '{"action":"enterPowerArmor"}'   # instant, nearest frame
 irm $p -Method Post -ContentType application/json -Body '{"action":"exitPowerArmor"}'
+irm $p -Method Post -ContentType application/json -Body '{"action":"stepIn"}'            # walk in, VR only
+irm $p -Method Post -ContentType application/json -Body '{"action":"stepOut"}'
 ```
 
-- **State** (`status`, and the wait) is the engine's own `PowerArmor::ActorInPowerArmor`
+- **State** (`status`, and every wait) is the engine's own `PowerArmor::ActorInPowerArmor`
   (VR `0x9BF5D0` through the address library), not console output.
 - **Frames** are furniture whose base has the `FurnitureTypePowerArmor` keyword, in the
   player's cell only: a frame across an exterior cell border is not listed.
-- **Enter / exit** run `player.cf "Actor.SwitchToPowerArmor" <frame>` / `none`, the switch
-  Immersive Flashlight's release check uses. It is instant, without the step-in animation;
-  activating a frame does not get the player in.
+- **`enterPowerArmor` / `exitPowerArmor`** run `player.cf "Actor.SwitchToPowerArmor" <frame>` /
+  `none`, the switch Immersive Flashlight's release check uses. It is setup, not the
+  transition: no activation, no walk-in, no animation, and the frame comes to the player.
+  Activating a frame from the console (`<frame>.activate player`) does not get the player in.
+- **`stepIn`** stands the player 70 units behind the frame, facing it, injects a standing pose
+  through the `input` tool (owner `devbench.player`), turns it until the primary wand's
+  activation ray is on the frame, and taps A on the primary hand. The game then runs its own
+  walk-in: the player ends at the frame's position. The ray is read from the wand's
+  ViewCaster (below), so the press only happens once the wand is on that frame; otherwise
+  `outcome` is `notAimed` and `aim.passes` shows where it pointed and what it picked.
+- **`stepOut`** holds the secondary hand's A/X button (X with the default hands) for 2 s. The
+  frame stays; the player steps out of it. That is the exit gesture in a setup with KabutoVR
+  loaded; a held A on the primary hand did nothing there.
 - **The wait** polls short main-thread reads from the listener thread until the state flips
   or `timeoutMs` passes, so the skeleton swap is never blocked. `outcome` is `switched`,
-  `already`, `refused` (the state did not change in time) or `notWaited`. KabutoVR blocks the
-  scripted exit, which reads as `refused`.
+  `already`, `refused` (the state did not change in time), `notWaited` or `notAimed`.
+- **A tap is re-sent** every 1.5 s while the state has not flipped and the wand is still on the
+  frame; `taps` counts them. Twice in live runs a tap with the wand on the frame started no
+  walk-in, both right after a `stepOut`, but four later immediate `stepOut` / `stepIn` cycles
+  switched on the first tap, so the cause is unknown. A tap that works flips the state within
+  about 250 ms.
+- **Aiming waits for the wand to settle**: after each turn it reads until two reads 100 ms apart
+  agree. The first injection after a load takes longer than a fixed 300 ms to reach the wand.
 
-Checked live on FO4VR 1.2.72 (2026-11-10, FRIK installed, KabutoVR not active), in an
-interior cell with five frames 1,290–1,490 units away:
+The wand's activation target: `ViewCasterBase::QActivatePickRef` (`0x9D0CE0`, from
+F4VRControlsConfig in the reference library) returns, through vtable slot 2, the record at
+`+0x90` of the caster held at `[base+0x5AC72B0]` while the byte at `+0xD0` is set; the record
+starts with the `ObjectRefHandle`. Slot 2 (`0x9D5780`) was disassembled on 1.2.72 and is
+checked before every read, so another runtime fails with a diagnostic. The ray runs along the
+wand node's local +Y, which is the second **row** of its world rotation; the second column is
+the same direction mirrored across world Y.
+
+Checked live on FO4VR 1.2.72 (2026-11-10, FRIK and KabutoVR loaded), in an interior cell with
+five frames 1,290–1,490 units away:
 
 - `findPowerArmor` listed all five; `enterPowerArmor` with no `formId` took the nearest and
   read `inPowerArmor: true` on the first poll (6 ms); `exitPowerArmor` the same (10–87 ms).
   Read in the same task as the command, the state has not changed yet: the switch lands on a
-  later frame, which is why the wait polls;
-- the switch brings the frame to the player rather than the player to the frame: after the
-  exit it stood 76 units away, the player had not moved;
+  later frame, which is why the wait polls. KabutoVR did not block the scripted exit;
 - `already`, a reference that is not a frame (400) and `formId` with `wait=false` behaved as
-  described. The `refused` path (KabutoVR active) has not been run.
+  described;
+- `stepIn` aimed and switched with the controllers switched off, on frames facing 0 and 231
+  degrees, in 216–263 ms from the tap; the power armor HUD opened and FRIK rebuilt its
+  power armor skeleton, as for a hand-made entry. `stepOut` switched in 438–514 ms. Four
+  immediate `stepOut` / `stepIn` cycles in a row each took one tap;
+- the scripted entry left FRIK warning that two forearm bones were missing
+  (`RArm_ForeArm2` / `3`); the walk-in did not.
 
 ## Main thread
 

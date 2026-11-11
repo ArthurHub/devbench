@@ -37,4 +37,6 @@ namespace dvb
 	RE::NiAVObject* FindPlayerNode(std::string_view a_name);
 	/// Main thread. The Wand node that follows one physical controller (Nodes_Fallout4.cpp).
 	RE::NiAVObject* WandNode(bool a_right);
+	/// Main thread. True when bLeftHandedMode:VR makes the left controller the primary hand.
+	bool LeftHandedMode();
 }
