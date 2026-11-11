@@ -64,11 +64,26 @@ namespace dvb
 			"action='reachStatus' (runId) reports { phase (queued | calibrating | reaching | holding | done | failed | "
 			"stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, "
 			"calibration { left?, right?: measured | reused }, error, active, stopping }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the "
-			"HMD and both controllers like a sequence, and it ends at a load. Fingers are not driven.";
+			"HMD and both controllers like a sequence, and it ends at a load. "
+			"action='pose' places the HMD and controllers without calibrating and holds them: the game puts each wand "
+			"straight at its controller, so a world point maps to tracking space through the HMD node and a turn fitted "
+			"from where the held wands land. The first pose takes over in the ready pose (head pitched -22 deg, hands 0.6 m "
+			"in front at chest height, swung 10 deg left so the desktop mirror shows them), at the eye height that puts "
+			"the camera head.cameraHeight units above the feet over the room node's lift (a body mod's seated / standing "
+			"offset), so the body stands naturally. 'head' {pitch?, eyeHeight?, cameraHeight?} pitches the head (negative "
+			"looks down); either height restarts the hold in the ready pose at that height. 'hands' "
+			"{left?, right?} each 'ready', {node, root?, front?, offset?} or {world:[x,y,z]}, the last two with an optional "
+			"controller pitch / yaw in degrees (the ready 10 / 10 otherwise; over 90 tilts it back past vertical); an absent hand stays. It "
+			"moves over moveMs, corrects up to 'corrections' times while a wand is further than toleranceUnits from its "
+			"target, holds holdMs, and answers once placed (about 0.5-1 s) with { controlToken, eyeHeight, headPitch, "
+			"turnDeg (with a node or world target), corrections, hands { left, right: { tracking, pitch, yaw, wand, target?, error? } }, elapsedMs }. A later pose "
+			"by the same owner moves from the held one in place (fresh: false); 'press' works over it; 'stop' with its "
+			"controlToken hands the devices back. A pose while another sequence holds the devices, this owner's own "
+			"included, answers 409. Fingers are not driven.";
 		input.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "press", "reach", "reachStatus", "reachStop" }) } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "press", "reach", "reachStatus", "reachStop", "pose" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "vrTrackedSet" }) }, { "description", "the only device on Fallout 4 (default)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
 								{ "frames", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumVRTrackedFrames }, { "description", "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes" }, { "items", json{ { "type", "object" } } } } },
@@ -78,12 +93,14 @@ namespace dvb
 								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
 								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
 								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "press: how long the buttons stay down (default 100)" } } },
-								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,root?,front?,offset?:[x,y,z]}, right?:{...}} - put that controller's wand next to a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in; at least one hand" } } },
+								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,root?,front?,offset?:[x,y,z]}, right?:{...}} - put that controller's wand next to a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in; at least one hand. pose: each hand also 'ready' or {world:[x,y,z]}, and a node or world hand takes pitch / yaw (degrees, -180..180) for how the controller points; an absent hand stays where it is held" } } },
 								{ "calibrate", json{ { "type", "string" }, { "enum", json::array({ "auto", "always" }) }, { "description", "reach: 'auto' (default) reuses a hand's calibration while the player's yaw is unchanged; 'always' measures it again" } } },
-								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters" } } },
-								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },
+								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters. pose: {pitch?, eyeHeight?, cameraHeight?} - pitch in degrees (-89..89, negative looks down; absent keeps the held head); eyeHeight (0.3..2.5) the injected eye height in tracking meters, instead of the one cameraHeight gives; cameraHeight (1..1000) world units above the player's feet the camera should sit at (default 115, a natural FRIK body); either height starts a fresh hold" } } },
+								{ "moveMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 5000 }, { "description", "pose: how long a move takes, so it is seen (default 300)" } } },
+								{ "corrections", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 5 }, { "description", "pose: correction moves while a wand misses its node or world target (default 2)" } } },
+								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000). pose: how long to hold after the move (default 600000)" } } },
 								{ "iterations", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 10 }, { "description", "reach: correction passes (default 4)" } } },
-								{ "toleranceUnits", json{ { "type", "number" }, { "minimum", 0.05 }, { "maximum", 50 }, { "description", "reach: converged when each wand is within this many world units of its target (default 1)" } } },
+								{ "toleranceUnits", json{ { "type", "number" }, { "minimum", 0.05 }, { "maximum", 50 }, { "description", "reach: converged when each wand is within this many world units of its target (default 1). pose: a wand this close needs no correction (default 1)" } } },
 								{ "approachUnits", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", 200 }, { "description", "reach: world units behind the target, along the facing, the first approach starts from (default 15)" } } },
 								{ "runId", json{ { "type", "integer" }, { "minimum", 1 }, { "description", "reachStatus: the run (default the latest)" } } },
 							} },

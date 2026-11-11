@@ -200,6 +200,7 @@ add_files("src/core/DifficultyLogic.cpp") -- difficulty level names and parsing;
 add_files("src/core/ActorIdleLogic.cpp") -- looping-idle replay gap and due check; pure logic
 add_files("src/core/CaptureBurstLogic.cpp") -- burst capture request validation and provider event folding; pure logic
 add_files("src/core/ReachLogic.cpp") -- reach solver, request parsing and frame building; pure logic
+add_files("src/core/PoseLogic.cpp") -- pose request parsing, ready pose, tracking-to-world map and move frames; pure logic
 add_files("src/core/FormSearchLogic.cpp") -- form search matching, head part types and armor slot masks; pure logic
 add_files("src/core/HavokAnimationLogic.cpp") -- animation duration and track counts from a Havok packfile; pure logic
 add_files("src/core/PluginHeaderLogic.cpp") -- author, description and masters from a plugin's TES4 record; pure logic

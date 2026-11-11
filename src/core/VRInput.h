@@ -12,6 +12,9 @@ namespace dvb
 	json VRInputCapabilities();
 	json HandleVRInput(const json& a_args, const ToolContext& a_ctx);
 	bool IsVRInputDevice(std::string_view a_device);
+	/// Whether the running sequence belongs to a_owner under a_controlToken, so a sequence
+	/// carrying that token replaces it in place.
+	bool VRSequenceHeldBy(std::string_view a_owner, std::string_view a_controlToken);
 
 	// Installs process-lifetime pass-through OpenVR interface hooks. They alter data only while
 	// one owned atomic sequence is active; otherwise every call reaches the original runtime.

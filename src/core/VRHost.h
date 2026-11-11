@@ -48,4 +48,16 @@ namespace dvb::vrhost
 	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name, const std::string& a_root = {});
 	/// The player's heading in radians (game yaw, 0 = +Y, increasing clockwise seen from above).
 	double PlayerYaw();
+
+	/// What Pose needs to stand the injected body naturally and map tracking space to the world.
+	struct PoseStance
+	{
+		double unitsPerMeter;  ///< world units per tracking meter
+		double roomLiftUnits;  ///< how far the room node sits above the player's feet (a body mod's seated / standing lift)
+		double cameraUnits;    ///< where the camera should sit above the feet by default
+	};
+	/// Throws ToolError(501) on a platform Pose has not been measured on.
+	PoseStance ReadPoseStance();
+	/// World position of the in-game HMD node, the anchor Pose maps tracking space through.
+	ReachLogic::Vec3 HmdWorld();
 }

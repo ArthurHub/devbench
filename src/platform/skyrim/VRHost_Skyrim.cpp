@@ -101,4 +101,18 @@ namespace dvb::vrhost
 			throw ToolError(503, "player is not available");
 		return pc->GetAngleZ();
 	}
+
+	/**
+	 * Not measured on Skyrim VR: its hand reads are body nodes, not controller-placed Wands, so
+	 * the HMD-anchored map Pose relies on is unverified there.
+	 */
+	PoseStance ReadPoseStance()
+	{
+		throw ToolError(501, "pose is not available on Skyrim VR yet; use reach");
+	}
+
+	ReachLogic::Vec3 HmdWorld()
+	{
+		throw ToolError(501, "pose is not available on Skyrim VR yet; use reach");
+	}
 }

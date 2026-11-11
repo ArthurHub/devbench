@@ -106,4 +106,26 @@ namespace dvb::vrhost
 			throw ToolError(503, "player is not available");
 		return player->data.angle.z;
 	}
+
+	/**
+	 * 70 world units per tracking meter, measured live (a controller 0.36 m from the head lands
+	 * 25.6 units from it). The camera target, 115 units above the feet, is where it sits in a
+	 * natural seated FRIK body: FRIK's 37.4-unit seated lift on the room node plus 1.11 m of head
+	 * height. The room node carries that lift, so reading it keeps the body standing the same
+	 * with FRIK seated, standing, or absent.
+	 */
+	PoseStance ReadPoseStance()
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player)
+			throw ToolError(503, "player is not available");
+		const auto* room = FindPlayerNode("roomNode");
+		return PoseStance{ 70.0, room->world.translate.z - player->data.location.z, 115.0 };
+	}
+
+	ReachLogic::Vec3 HmdWorld()
+	{
+		const auto& t = FindPlayerNode("hmdNode")->world.translate;
+		return ReachLogic::Vec3{ t.x, t.y, t.z };
+	}
 }

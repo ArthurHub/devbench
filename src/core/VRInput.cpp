@@ -4,6 +4,7 @@
 #include "core/Host.h"
 #include "core/Log.h"
 #include "core/MainThread.h"
+#include "core/PoseControl.h"
 #include "core/ReachControl.h"
 #include "core/ToolRegistry.h"
 #include "core/VRHost.h"
@@ -203,6 +204,12 @@ namespace dvb
 			{
 				std::lock_guard lock(m_mutex);
 				m_events = &a_events;
+			}
+
+			bool HeldBy(std::string_view a_owner, std::string_view a_controlToken)
+			{
+				std::lock_guard lock(m_mutex);
+				return m_transaction.CanReplace(a_owner, a_controlToken);
 			}
 
 			json Status()
@@ -1073,6 +1080,15 @@ namespace dvb
 		return a_device == kDevice;
 	}
 
+	/**
+	 * Whether the running sequence is a_owner's under a_controlToken: false once it ran out,
+	 * stopped, ended at a load, or another sequence took the devices.
+	 */
+	bool VRSequenceHeldBy(std::string_view a_owner, std::string_view a_controlToken)
+	{
+		return VRTrackedSetManager::Get().HeldBy(a_owner, a_controlToken);
+	}
+
 	json HandleVRInput(const json& a_args, const ToolContext& a_ctx)
 	{
 		try {
@@ -1092,6 +1108,8 @@ namespace dvb
 				return ReachControl::Start(a_args, owner, a_ctx);
 			if (action == "reachStop")
 				return ReachControl::Stop(owner);
+			if (action == "pose")
+				return PoseControl::Place(a_args, owner, a_ctx);
 			if (action == "press")
 				return VRTrackedSetManager::Get().Press(a_args, owner);
 			if (action == "stop" || action == "releaseAll") {
@@ -1102,7 +1120,7 @@ namespace dvb
 					a_ctx.internal,
 					action == "releaseAll" ? "releaseAll" : "request");
 			}
-			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|reach|reachStatus|reachStop)", action));
+			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|reach|reachStatus|reachStop|pose)", action));
 		} catch (const json::exception& e) {
 			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}

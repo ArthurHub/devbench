@@ -29,3 +29,10 @@ _Avoid_: recording, replay (those name a separate feature)
 **Reach**:
 Driving the Controllers until their in-game nodes (Wands on Fallout 4 VR) reach a target relative to a named node, correcting against where they actually land.
 _Avoid_: move hand
+
+**Pose**:
+Placing and holding the Tracked set without calibrating: the head at one eye position and pitched, each Controller put where its Wand lands on a node or world point, mapped through the HMD node and a turn fitted from the held Wands.
+_Avoid_: reach (which calibrates), stance
+
+**Ready pose**:
+The Pose a held Tracked set starts in and returns to: the head pitched down and both hands in front at chest height, in view.

@@ -108,7 +108,7 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `rendertarget` | `action='list'` every render target the engine owns, plus the threading facts below. `'stats'` (copy one back, report `{ nonFinitePct, darkPct, meanLuma, maxChannel }`) and `'dump'` (also write a BMP) are **disabled** and answer 501. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node, `pose` places and holds the head and hands without calibrating. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (instant setup through the console), `stepIn` / `stepOut` (VR: the transition a player makes, through the controllers). Weapon: `weapon` (`drawn`, `weaponState`, `equipped`), `drawWeapon` / `sheatheWeapon` (the engine's own call). Each switch waits for the engine state. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 `memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
@@ -394,7 +394,80 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"press","owne
   Framework's own patches, so injected input passes through other mods' controller hooks
   like real input. `status.hooks` reports `closestToRuntime` per slot; `false` means another
   mod patched that slot first and injected input skips it.
-- **Lifecycle**: an active sequence or reach stops on load and new game.
+- **Lifecycle**: an active sequence, reach or pose stops on load and new game.
+
+### `pose`: placing without calibrating
+
+`reach` measures how tracking space maps to the world on every run. That map is simpler than
+it assumes: the game puts each Wand straight at its controller's pose, and the room node
+recenters on the head, so a world point maps to tracking space through the HMD node alone:
+
+```
+world = hmdNode + turn(theta) * 70 units/m * (controller - hmd)    (tracking axes x right, y up, -z forward)
+```
+
+`theta`, the turn between tracking space and the world, is not on any scene-graph node (the
+room node has no rotation). `pose` fits it from where the held Wands land against where it put
+them, so placing a hand is one calculation, a short move and a check.
+
+```powershell
+# take over in the ready pose, then put the left hand at a world point with the head looking down
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t"}'
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","head":{"pitch":-60},"hands":{"left":{"world":[-1765,-1372,75]}}}'
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","hands":{"left":"ready"},"head":{"pitch":-22}}'
+```
+
+- **Synchronous.** It answers once the hands are placed (about 0.5–1 s), with `controlToken`
+  (for `stop`), `eyeHeight`, `headPitch`, `turnDeg` (when a node or world target fitted it), `corrections` and per hand `tracking`,
+  `wand`, `target` and `error`. `press` works over the hold, as for a sequence.
+- **Held across calls.** A later `pose` by the same owner moves from the held one, replacing
+  its sequence in place (`fresh: false`). An absent hand or head stays where it is. The hold
+  is its own sequence, under its own token: once it runs out, stops, ends at a load or is
+  replaced by another `sequence` (even the same owner's), the next `pose` starts fresh, and
+  while another sequence holds the devices `pose` answers 409.
+- **Ready pose.** A fresh hold starts with the head pitched −22° and the hands 0.6 m in front,
+  0.4 m below the eyes, 0.19 m to each side, swung 10° left so the desktop mirror (the left eye)
+  shows them, the controllers pointing 10° up. It was picked in the headset; −60° is the
+  pitch that shows the belt.
+- **Eye height.** A body mod lifts the room node above the player's feet (FRIK's seated
+  `fPlayerHMDOffsetUpSitting`, 37.4 units here), and an injected head at a fixed standing
+  height stacks on that lift: under seated FRIK, reach's 1.65 m stretches the body. `pose`
+  reads the lift and injects the eye height that puts the camera `head.cameraHeight` (default 115) units above the feet: 1.11 m seated, about 1.52 m under FRIK's standing lift.
+  `head.eyeHeight` overrides it; either restarts the hold in the ready pose at that height,
+  in place.
+- **Controller aim.** A node or world hand takes `pitch` / `yaw` (degrees, tracking space)
+  for how its controller points; otherwise it points the ready way. The Wand sits at the
+  controller whatever the aim, but the body's hand hangs about 6 units behind it along the
+  controller: a hand raised to the head is placed tilted back (pitch 123, yaw 14 for the
+  left, as recorded in the headset), so it hangs beside the head instead of in the face.
+- **The head only pitches**, around the eye point, so the HMD node does not move between
+  placements. A body mod leans the body with the pitch, so `pose` pitches the head first and
+  reads node targets in the pitched pose; a correction then removes what the body moved
+  with the arm.
+- **Skyrim**: not measured; `pose` answers 501 there.
+
+Checked live on FO4VR 1.2.72 (2026-11-11, FRIK seated, F4VR Common Framework) through a
+test-side prototype of the same map, with a held `sequence`:
+
+- the map: two physical controllers 0.36 and 0.39 m from the head landed 25.6 and 27.6 units
+  from the HMD node, both matching the map with one turn of 66.71°: the physical HMD's yaw
+  (75.4°) minus the HMD node's (8.55°, the player's heading);
+- the room node sat 37.39 units above the feet, exactly FRIK's seated lift, and with the eyes
+  injected at 1.11 m the HMD node sat 115.08 units above them;
+- Immersive Flashlight's gesture zones (head, hand to hand, the belt with each hand) each took
+  one move: 0.5–1.0 s, no correction, landing 0.0–1.9 units from the zone's center. The same
+  test area went from 151 s with `reach` to 26 s.
+
+Then through `pose` itself, the same day and setup:
+
+- a fresh hold read the room node's lift and injected the eyes at 1.109 m; the HMD node sat
+  114.99 units above the feet (target 115). Each call answered in 0.6–1.3 s;
+- the left hand to the body grab zone's center as a world point, with the head pitched to
+  −60°: one correction (the body shifts with the pitch), 0.93 units off; to `Chest`
+  (`root: player`, `front: 10`): one correction, 0.60 units off; back to `ready`: no reading
+  needed;
+- Immersive Flashlight's controller tests ran on `pose` alone: all six passed, each zone in one
+  placement, landing as with the prototype.
 
 Checked live on FO4VR 1.2.72 (2026-11-10, FRIK, F4VR Common Framework and FO4VRTools
 installed):
