@@ -733,6 +733,148 @@ namespace dvb
 			return out;
 		}
 
+		// ---- weapon / drawWeapon / sheatheWeapon ----------------------------------------------
+		//
+		// The switch is the engine's own draw / sheathe call, Actor::DrawWeaponMagicHands(bool)
+		// (vtable slot 0xC9; on FO4VR 1.2.72 the player's slot is 0xF78D10, the function
+		// F4VRControlsConfig and ROCK use: Modding-Reference F4VR/Analysis). It plays ActionDraw
+		// / ActionSheath on the actor and, when the graph accepts, moves the weapon state to
+		// drawing / sheathing in the same call; the animation then ends it at drawn / sheathed.
+		// With no weapon equipped the same call sheathes drawn fists.
+		//
+		// The state is ActorState's weapon state. On FO4VR it is not where CommonLibF4 declares
+		// it: 0xF78D10 reads it as (dword at ActorState+0x0C >> 2) & 7, one bit above the
+		// header's 0C:01, so the VR read takes the bits itself. With the header's bits a settled
+		// state still answers GetWeaponMagicDrawn() correctly, but the six states do not decode.
+		//
+		// The equipped weapon is the Papyrus native Actor.GetEquippedWeapon (VR 0x140D790, the
+		// call F4VR-CommonFramework makes): it ignores its VM and stack arguments and answers
+		// the object in equip index 0 only when that is a weapon. VR's MiddleHighProcessData
+		// keeps equippedItems at +0x290, not the header's +0x288, so the array is not read here.
+
+		constexpr std::uintptr_t kActorStateFlagsOffset = 0x0C;
+		constexpr std::uint32_t  kVRWeaponStateShift = 2;
+		constexpr std::uint32_t  kWeaponSheathed = 0;
+		constexpr std::uint32_t  kWeaponDrawn = 3;
+		constexpr std::uintptr_t kVRGetEquippedWeaponRVA = 0x140D790;
+		// push rbx; sub rsp,30h; mov rcx,r8: the native's first bytes on 1.2.72
+		constexpr std::uint8_t kVRGetEquippedWeaponProlog[] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x49, 0x8B, 0xC8 };
+
+		/**
+		 * Main thread. The player's RE::WEAPON_STATE value, from the bits the running game uses.
+		 */
+		std::uint32_t ReadWeaponState(RE::PlayerCharacter& a_player)
+		{
+			const RE::ActorState& state = a_player;
+			if (!REL::Module::IsVR())
+				return static_cast<std::uint32_t>(state.weaponState);
+			std::uint32_t flags = 0;
+			std::memcpy(&flags, reinterpret_cast<const std::uint8_t*>(&state) + kActorStateFlagsOffset, sizeof(flags));
+			return (flags >> kVRWeaponStateShift) & 7;
+		}
+
+		std::string WeaponStateName(std::uint32_t a_state)
+		{
+			constexpr const char* kNames[] = { "sheathed", "wantToDraw", "drawing", "drawn", "wantToSheathe", "sheathing" };
+			return a_state < std::size(kNames) ? kNames[a_state] : std::format("unknown({})", a_state);
+		}
+
+		/**
+		 * Main thread, VR. The weapon in the player's equip index 0 as { name, formId }, null for
+		 * none (fists). The native is checked by its first bytes, so another runtime fails with
+		 * a diagnostic instead of calling into the wrong function.
+		 */
+		json EquippedWeaponJson(RE::PlayerCharacter& a_player)
+		{
+			const auto   address = REL::Module::get().base() + kVRGetEquippedWeaponRVA;
+			std::uint8_t prolog[sizeof(kVRGetEquippedWeaponProlog)]{};
+			if (!mem::SafeRead(reinterpret_cast<const void*>(address), prolog, sizeof(prolog)) ||
+				std::memcmp(prolog, kVRGetEquippedWeaponProlog, sizeof(prolog)) != 0)
+				throw ToolError(500, std::format("player weapon: Actor.GetEquippedWeapon at base+0x{:X} did not validate; this runtime is not the measured one", kVRGetEquippedWeaponRVA));
+			using GetEquippedWeapon_t = RE::TESObjectWEAP* (*)(void*, std::uint64_t, RE::Actor*, std::uint64_t);
+			auto* weapon = reinterpret_cast<GetEquippedWeapon_t>(address)(nullptr, 0, &a_player, 0);
+			if (!weapon)
+				return nullptr;
+			return json{ { "name", std::string{ RE::TESFullName::GetFullName(*weapon) } }, { "formId", std::format("0x{:08X}", weapon->GetFormID()) } };
+		}
+
+		/**
+		 * Main thread. { drawn, weaponState, equipped }: drawn is weaponState >= drawn, what
+		 * GetWeaponMagicDrawn() means. `equipped` is VR only; flat has no measured read.
+		 */
+		json WeaponJson(RE::PlayerCharacter& a_player)
+		{
+			const auto state = ReadWeaponState(a_player);
+			json       out{ { "drawn", state >= kWeaponDrawn }, { "weaponState", WeaponStateName(state) } };
+			if (REL::Module::IsVR())
+				out["equipped"] = EquippedWeaponJson(a_player);
+			return out;
+		}
+
+		json HandleWeaponStatus()
+		{
+			return MainThread::RunAndWait([]() -> json { return WeaponJson(RequirePlayer("weapon")); });
+		}
+
+		/**
+		 * drawWeapon / sheatheWeapon: the engine's draw / sheathe call on the main thread, then
+		 * short polls from the listener thread until the state settles at drawn / sheathed or
+		 * timeoutMs passes. `outcome` is switched, already, refused or notWaited.
+		 */
+		json HandleWeaponSwitch(const std::string& a_action, const json& a_args)
+		{
+			const bool        draw = a_action == "drawWeapon";
+			const bool        wait = a_args.value("wait", true);
+			const auto        timeout = TimeoutArg(a_args);
+			const std::string target = WeaponStateName(draw ? kWeaponDrawn : kWeaponSheathed);
+
+			json out = MainThread::RunAndWait([a_action, draw]() -> json {
+				auto& player = RequirePlayer(a_action);
+				if (ReadWeaponState(player) == (draw ? kWeaponDrawn : kWeaponSheathed)) {
+					json already = WeaponJson(player);
+					already["outcome"] = "already";
+					return already;
+				}
+				player.DrawWeaponMagicHands(draw);
+				return WeaponJson(player);
+			});
+			out["action"] = a_action;
+			if (out.contains("outcome"))
+				return out;
+			if (!wait) {
+				out["outcome"] = "notWaited";
+				out["note"] = "weaponState was read right after the call; the animation ends it later, so read action='weapon' to see it settle";
+				return out;
+			}
+
+			const auto start = std::chrono::steady_clock::now();
+			const auto deadline = start + timeout;
+			int        stalls = 0;
+			while (out["weaponState"] != target) {
+				const auto now = std::chrono::steady_clock::now();
+				if (now >= deadline)
+					break;
+				std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(kPollInterval, deadline - now));
+				try {
+					out.update(MainThread::RunAndWait([]() -> json { return WeaponJson(RequirePlayer("wait")); }, kPollTaskTimeout));
+				} catch (const MainThread::TaskTimeout&) {
+					++stalls;
+				}
+			}
+			out["waitedMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+			if (stalls)
+				out["mainThreadStalls"] = stalls;
+			const bool switched = out["weaponState"] == target;
+			out["outcome"] = switched ? "switched" : "refused";
+			if (!switched) {
+				out["note"] = std::format(
+					"the weapon state is {} after {} ms, not {}. The engine did not take the {} (an animation in progress, a "
+					"menu, a mod) or the animation has not finished",
+					out["weaponState"].get<std::string>(), timeout.count(), target, draw ? "draw" : "sheathe");
+			}
+			return out;
+		}
+
 		json HandlePlayer(const json& a_args, const ToolContext& a_ctx)
 		{
 			if (!a_args.is_object())
@@ -748,7 +890,11 @@ namespace dvb
 				return HandleStepIn(a_args, a_ctx);
 			if (action == "stepOut")
 				return HandleStepOut(a_args, a_ctx);
-			throw ToolError(400, std::format("player: unknown action '{}' (status|findPowerArmor|enterPowerArmor|exitPowerArmor|stepIn|stepOut)", action));
+			if (action == "weapon")
+				return HandleWeaponStatus();
+			if (action == "drawWeapon" || action == "sheatheWeapon")
+				return HandleWeaponSwitch(action, a_args);
+			throw ToolError(400, std::format("player: unknown action '{}' (status|findPowerArmor|enterPowerArmor|exitPowerArmor|stepIn|stepOut|weapon|drawWeapon|sheatheWeapon)", action));
 		}
 	}
 
@@ -757,7 +903,7 @@ namespace dvb
 		ToolDescriptor player;
 		player.name = "player";
 		player.description =
-			"The player's power armor. action='status' (default) → { inPowerArmor }, the engine's own answer "
+			"The player's power armor and weapon. action='status' (default) → { inPowerArmor }, the engine's own answer "
 			"(PowerArmor::ActorInPowerArmor). 'findPowerArmor' (radius default 500 units, limit default 5) → { inPowerArmor, "
 			"radius, frames:[{ formId, baseFormId, name, distance }] }, the power armor frames (furniture with the "
 			"FurnitureTypePowerArmor keyword) in the player's cell, nearest first; a frame across an exterior cell border is "
@@ -776,16 +922,23 @@ namespace dvb
 			"lost twice in live runs, cause unknown); stepOut holds the secondary hand's A/X button for 2 s and waits. Both hand the controllers back when "
 			"done. They return { action, frame?, aim?: { matched, yawDeg, passes:[{ yawDeg, wandYawDeg, wandErrorDeg, pick }] }, "
 			"inPowerArmor, taps?, waitedMs, outcome, note? }, outcome as above plus 'notAimed' (the ray never landed on the frame, "
-			"so nothing was pressed). The exit gesture was measured with KabutoVR loaded. 409 when no save is loaded.";
+			"so nothing was pressed). The exit gesture was measured with KabutoVR loaded. 'weapon' → { drawn, weaponState, "
+			"equipped }: weaponState is sheathed | wantToDraw | drawing | drawn | wantToSheathe | sheathing, drawn is weaponState "
+			">= drawn (what GetWeaponMagicDrawn means, so true for drawn fists), equipped is the weapon in hand as { name, formId } "
+			"or null for none (fists); equipped is VR only. 'drawWeapon' and 'sheatheWeapon' make the engine's own draw / sheathe "
+			"call (Actor::DrawWeaponMagicHands), then wait (wait default true) until weaponState settles at drawn / sheathed or "
+			"timeoutMs passes. They return { action, outcome, drawn, weaponState, equipped, waitedMs, mainThreadStalls?, note? }; "
+			"outcome is 'switched', 'already' (nothing was called), 'refused' (the state did not settle in time) or 'notWaited'. "
+			"sheatheWeapon also puts away drawn fists, which unequipping a weapon leaves up. 409 when no save is loaded.";
 		player.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "status", "findPowerArmor", "enterPowerArmor", "exitPowerArmor", "stepIn", "stepOut" }) }, { "description", "default 'status'" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "status", "findPowerArmor", "enterPowerArmor", "exitPowerArmor", "stepIn", "stepOut", "weapon", "drawWeapon", "sheatheWeapon" }) }, { "description", "default 'status'" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "enterPowerArmor / stepIn: the frame reference, hex (\"0x0001F2A3\"), as findPowerArmor lists it; default the nearest frame within radius" } } },
 								{ "radius", json{ { "type", "number" }, { "minimum", 1 }, { "maximum", kMaxRadius }, { "description", "findPowerArmor, or enterPowerArmor / stepIn without formId: how far to look, in game units (default 500)" } } },
 								{ "limit", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxLimit }, { "description", "findPowerArmor: most frames to list (default 5)" } } },
-								{ "wait", json{ { "type", "boolean" }, { "description", "enterPowerArmor / exitPowerArmor: wait for the engine state to flip (default true)" } } },
-								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxTimeoutMs }, { "description", "enterPowerArmor / exitPowerArmor / stepIn / stepOut: how long to wait for the state (default 10000; stepOut adds its 2 s hold)" } } },
+								{ "wait", json{ { "type", "boolean" }, { "description", "enterPowerArmor / exitPowerArmor / drawWeapon / sheatheWeapon: wait for the engine state to flip (default true)" } } },
+								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxTimeoutMs }, { "description", "enterPowerArmor / exitPowerArmor / stepIn / stepOut / drawWeapon / sheatheWeapon: how long to wait for the state (default 10000; stepOut adds its 2 s hold)" } } },
 							} },
 		};
 		a_registry.Register(std::move(player), &HandlePlayer);

@@ -20,7 +20,8 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 > `stats`/`dump` answer 501. `input` (`device='vrTrackedSet'`: `sequence`, `press`, `reach`)
 > drove the HMD and both controllers live on 1.2.72 (2026-11-10), down to a mod's hand
 > gesture (see "`input`, the short version"). `player` moved the player in and out of power
-> armor live the same day. `measure`, `log` and `files` have no recorded
+> armor live the same day, and drew and sheathed the weapon (a gun and bare fists) live on
+> 2026-11-11. `measure`, `log` and `files` have no recorded
 > live run yet. Flat Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
@@ -108,7 +109,7 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `reach` moves the hands until their wand nodes sit at a player node. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (instant setup through the console), `stepIn` / `stepOut` (VR: the transition a player makes, through the controllers). Each switch waits for the engine state. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (instant setup through the console), `stepIn` / `stepOut` (VR: the transition a player makes, through the controllers). Weapon: `weapon` (`drawn`, `weaponState`, `equipped`), `drawWeapon` / `sheatheWeapon` (the engine's own call). Each switch waits for the engine state. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 `memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
@@ -464,6 +465,57 @@ five frames 1,290–1,490 units away:
   immediate `stepOut` / `stepIn` cycles in a row each took one tap;
 - the scripted entry left FRIK warning that two forearm bones were missing
   (`RArm_ForeArm2` / `3`); the walk-in did not.
+
+### Weapon draw and sheathe
+
+```powershell
+irm $p -Method Post -ContentType application/json -Body '{"action":"weapon"}'
+irm $p -Method Post -ContentType application/json -Body '{"action":"sheatheWeapon"}'
+irm $p -Method Post -ContentType application/json -Body '{"action":"drawWeapon","timeoutMs":5000}'
+```
+
+- **`weapon`** answers `{ drawn, weaponState, equipped }`. `weaponState` is `sheathed`,
+  `wantToDraw`, `drawing`, `drawn`, `wantToSheathe` or `sheathing`. `drawn` is `weaponState`
+  at `drawn` or later, what `GetWeaponMagicDrawn()` means, so it is true for drawn fists.
+  `equipped` is the weapon in hand as `{ name, formId }`, or `null` for none (fists); VR only.
+- **`drawWeapon` / `sheatheWeapon`** call `Actor::DrawWeaponMagicHands(bool)`, the engine's
+  own draw / sheathe (vtable slot `0xC9`; the player's is `0xF78D10` on 1.2.72, the call
+  F4VRControlsConfig and ROCK use). It plays `ActionDraw` / `ActionSheath` and, when the graph
+  accepts, moves the state to `drawing` / `sheathing` in the same call. The wait then polls
+  until the state settles at `drawn` / `sheathed` or `timeoutMs` passes: `outcome` is
+  `switched`, `already` (nothing was called), `refused` or `notWaited` (`wait=false`).
+- **Drawn fists**: `player.unequipitem <weapon>` leaves the player with fists up and
+  `GetWeaponMagicDrawn()` true. `sheatheWeapon` is the way to put them away; FO4's Papyrus
+  has no `SheatheWeapon`, and `player.cf` with an unknown function compiles and only prints
+  "not found".
+- **Do not look forms up with the console's `help`** (`help ActionSheath 4` hung the main
+  thread and crashed the game).
+
+Two VR layouts differ from CommonLibF4's headers, both read from the 1.2.72 binary:
+
+- the weapon state is `(dword at ActorState+0x0C >> 2) & 7`, one bit above the header's
+  `0C:01` (`0xF78D10` tests it that way). `weapon` reads those bits itself. Through the header
+  a settled state still answers `GetWeaponMagicDrawn()` correctly, but the transition states
+  decode wrong;
+- `MiddleHighProcessData::equippedItems` is at `+0x290`, not `+0x288` (`0xE80240`). `equipped`
+  does not read the array: it calls the Papyrus native `Actor.GetEquippedWeapon` (`0x140D790`,
+  the call F4VR-CommonFramework makes), checked by its first bytes before the call.
+
+Checked live on FO4VR 1.2.72 (2026-11-11), on a character with no weapon and then a 10mm
+added from the console:
+
+- with nothing equipped, `drawWeapon` raised the fists (`drawn: true`, `equipped: null`) in
+  320–333 ms and `sheatheWeapon` put them away (`drawn: false`, `sheathed`) in 432–444 ms;
+- with the 10mm, `weapon` read `drawn` and `{ name: "10mm", formId: "0x00004822" }`;
+  `sheatheWeapon` with `wait=false` read `sheathing` right after the call, then `sheathed`;
+  `drawWeapon` switched in 221 ms. `already` answered without calling the engine;
+- the state dword read `0x20020D` with fists drawn and `0x200201` sheathed: bits 2–4 hold the
+  state, and the player's vtable slot `0xC9` is `base+0xF78D10`;
+- `player.unequipitem` on the drawn 10mm left the state `sheathed` here, so the drawn fists
+  that command can leave behind were not reproduced that way; they were made with `drawWeapon`.
+
+On flat the state comes from the header's bitfield and there is no `equipped`; flat has never
+been loaded.
 
 ## Main thread
 
