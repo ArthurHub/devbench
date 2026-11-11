@@ -74,10 +74,14 @@ namespace dvb::vrhost
 		return { 0.03, 0.0 };
 	}
 
-	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name)
+	/**
+	 * A node of the player's body (third-person) 3D by name, or of the first-person 3D when
+	 * a_root is "firstPerson".
+	 */
+	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name, const std::string& a_root)
 	{
 		auto* pc = RE::PlayerCharacter::GetSingleton();
-		auto* root = pc ? pc->Get3D(false) : nullptr;
+		auto* root = pc ? pc->Get3D(a_root == "firstPerson") : nullptr;
 		auto* node = root ? root->GetObjectByName(RE::BSFixedString(a_name.c_str())) : nullptr;
 		if (!node)
 			throw ToolError(404, std::format("node '{}' not found on the player", a_name));

@@ -281,6 +281,13 @@ namespace dvb::ReachLogic
 					a_error = "'" + path + ".node' must be a non-empty string of at most 128 characters";
 					return std::nullopt;
 				}
+				if (hand.contains("root") && !hand["root"].is_null()) {
+					if (!hand["root"].is_string() || (hand["root"] != "player" && hand["root"] != "firstPerson")) {
+						a_error = "'" + path + ".root' must be 'player' or 'firstPerson'";
+						return std::nullopt;
+					}
+					target.root = hand["root"].get<std::string>();
+				}
 				if (hand.contains("front") && !hand["front"].is_null()) {
 					if (!ReadNumber(hand["front"], path + ".front", kFrontMin, kFrontMax, target.front, a_error)) {
 						return std::nullopt;
@@ -387,6 +394,15 @@ namespace dvb::ReachLogic
 			if (!ReadNumber(a_args["approachUnits"], "approachUnits", kApproachMin, kApproachMax, request.approachUnits, a_error)) {
 				return std::nullopt;
 			}
+		}
+
+		if (a_args.contains("calibrate") && !a_args["calibrate"].is_null()) {
+			const json& calibrate = a_args["calibrate"];
+			if (!calibrate.is_string() || (calibrate != "auto" && calibrate != "always")) {
+				a_error = "'calibrate' must be 'auto' or 'always'";
+				return std::nullopt;
+			}
+			request.recalibrate = calibrate == "always";
 		}
 
 		if (!request.left && !request.right) {
@@ -526,10 +542,31 @@ namespace dvb::ReachLogic
 			const double worst = std::max(a_progress.left ? Norm(a_progress.left->error) : 0.0, a_progress.right ? Norm(a_progress.right->error) : 0.0);
 			result["worstErrorDistance"] = round2(worst);
 		}
+		if (!a_progress.calibrationLeft.empty() || !a_progress.calibrationRight.empty()) {
+			json calibration = json::object();
+			if (!a_progress.calibrationLeft.empty())
+				calibration["left"] = a_progress.calibrationLeft;
+			if (!a_progress.calibrationRight.empty())
+				calibration["right"] = a_progress.calibrationRight;
+			result["calibration"] = std::move(calibration);
+		}
 		if (!a_progress.error.empty()) {
 			result["error"] = a_progress.error;
 		}
 		return result;
+	}
+
+	/**
+	 * True when the yaws differ by at most kCalibrationYawToleranceRad, compared around the
+	 * circle so -pi and +pi are the same heading.
+	 */
+	bool CalibrationReusable(double a_measuredYaw, double a_yaw)
+	{
+		constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
+		double           diff = std::fmod(std::abs(a_yaw - a_measuredYaw), kTwoPi);
+		if (diff > kTwoPi / 2.0)
+			diff = kTwoPi - diff;
+		return diff <= kCalibrationYawToleranceRad;
 	}
 
 	bool Converged(double a_worstErrorUnits, double a_toleranceUnits)

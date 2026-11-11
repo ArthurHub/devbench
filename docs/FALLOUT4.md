@@ -380,6 +380,14 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"press","owne
   so it works with or without FRIK. It calibrates first (four 4 s legs, 0.2 m each, about
   16 s per hand), then eases in over 1.5 s and corrects until within `toleranceUnits`. The
   HMD sits at standing height (eyes 1.65 m, hands 1.0 m), so the body is not sneaking.
+  A hand's `root` (`player` or `firstPerson`) searches one skeleton alone: both have a
+  `Chest`, and the first-person one sits near the world origin, far from the body.
+- **Calibration reuse.** The tracking-to-world map turns with the player and moves with
+  them, so a hand's calibration from a reach that converged is kept while the player's yaw
+  stays within 0.5°. The next reach re-anchors it with one rest sample (2.6 s) instead of
+  four legs. `reachStatus.calibration` says `measured` or `reused` per hand;
+  `calibrate='always'` measures again, a reach that does not converge drops the cache, and
+  so does a load.
 - **Hooks** go on the real IVRSystem_019 / IVRCompositor_022 objects, looked up through
   `openvr_api.dll`'s `VR_GetGenericInterface`, at kGameDataReady/kGameLoaded and retried
   until OpenVR is up. That puts devbench closest to the runtime, under the F4VR Common
@@ -397,6 +405,11 @@ installed):
 - `reach` converged within 0.6 units on the first or second pass, in left-handed mode too
   (the wands swap and reach followed the swap); the hand stays injected from the first frame
   to the last, with no step over 3 units after calibration;
+- calibration reuse and `root` (2026-11-11): a first reach to `hmdNode` measured the left
+  hand and finished in 20 s with a 3 s hold; the next one, 5 units lower, `reused` it,
+  converged on the first pass and finished in 10 s with a 0.5 s hold. A reach to the
+  body's `Chest` (`root: player`, 15 units in front) reused it too and converged on the
+  second pass (the body follows the arm) in 12 s;
 - the acceptance scenario: Immersive Flashlight's head gesture, driven by devbench alone.
   `reach` put the offhand 10 units in front of `hmdNode`, a `press` tap moved the light to
   the head, a long press back to the hand. The Common Framework's input handling saw the

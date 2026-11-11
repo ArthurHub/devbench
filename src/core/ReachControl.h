@@ -15,6 +15,6 @@ namespace dvb::ReachControl
 	json Stop(const std::string& a_owner);
 	/// True while a run is queued, calibrating, reaching or holding.
 	bool Active();
-	/// Stops any active run; called on game load and new game.
+	/// Stops any active run and drops the cached calibrations; called on game load and new game.
 	void EndSession();
 }

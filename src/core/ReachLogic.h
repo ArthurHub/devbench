@@ -50,9 +50,16 @@ namespace dvb::ReachLogic
 	/// restTracking + J^-1 (world - calibration.rest); falls back to restTracking if singular.
 	Vec3 TrackingFor(const Calibration& a_calibration, const Vec3& a_restTracking, const Vec3& a_world);
 
+	/// Whether a calibration measured at player yaw a_measuredYaw (radians) still maps tracking
+	/// to world at a_yaw: the map turns with the player, and its translation is re-measured.
+	bool CalibrationReusable(double a_measuredYaw, double a_yaw);
+
 	struct HandTarget
 	{
 		std::string node;
+		/// Which skeleton to search for node: "player" (body) or "firstPerson"; empty = the
+		/// platform's default order.
+		std::string root;
 		double      front{ 0 };
 		Vec3        offset;
 	};
@@ -82,6 +89,8 @@ namespace dvb::ReachLogic
 		int                       iterations{ 4 };
 		double                    toleranceUnits{ 1.0 };
 		double                    approachUnits{ 15.0 };
+		/// calibrate='always': measure every hand even when a cached calibration is reusable.
+		bool recalibrate{ false };
 	};
 
 	/// Parses the `reach` tool arguments; on failure fills a_error and returns nullopt.
@@ -105,6 +114,7 @@ namespace dvb::ReachLogic
 	inline constexpr double      kApproachMin = 0.0;
 	inline constexpr double      kApproachMax = 200.0;
 	inline constexpr std::size_t kNodeMaxLen = 128;
+	inline constexpr double      kCalibrationYawToleranceRad = 0.5 * 3.14159265358979323846 / 180.0;
 	inline constexpr long        kCalibrationLegMs = 4000;
 	/// How long ApproachAndHoldFrames takes to blend from its start to its final pose.
 	inline constexpr long kApproachBlendMs = 1500;
@@ -146,6 +156,9 @@ namespace dvb::ReachLogic
 		std::optional<HandProgress> left;
 		std::optional<HandProgress> right;
 		std::string                 error;
+		/// Per hand: "measured" or "reused"; empty until decided or for an unused hand.
+		std::string calibrationLeft;
+		std::string calibrationRight;
 	};
 
 	json ProgressJson(const Progress& a_progress);

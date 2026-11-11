@@ -713,25 +713,33 @@ namespace dvb
 	/**
 	 * Finds a player node by name for Reach: a VR node slot as the nodes tool names it
 	 * (hmdNode, primaryWandNode, ...), then a node of that name in the first-person skeleton,
-	 * then in the body skeleton (player 3D, which FRIK drives). Empty or refused slots and
-	 * missing skeletons are skipped. Throws ToolError(404) naming the places searched.
+	 * then in the body skeleton (player 3D, which FRIK drives). a_root "player" or
+	 * "firstPerson" searches that skeleton alone, since both have bones of the same names.
+	 * Empty or refused slots and missing skeletons are skipped. Throws ToolError(404).
 	 */
-	RE::NiAVObject* FindPlayerNode(std::string_view a_name)
+	RE::NiAVObject* FindPlayerNode(std::string_view a_name, std::string_view a_root)
 	{
-		if (REL::Module::IsVR()) {
+		if (a_root.empty() && REL::Module::IsVR()) {
 			if (const Slot* slot = FindVRSlot(a_name)) {
 				if (auto* node = VRSlotRoot(*slot).node)
 					return node;
 			}
 		}
+		std::vector<Resolved> roots;
+		if (a_root.empty() || a_root == "firstPerson")
+			roots.push_back(FirstPersonRoot());
+		if (a_root.empty() || a_root == "player")
+			roots.push_back(PlayerRoot());
 		const std::string name(a_name);
-		for (const Resolved& root : { FirstPersonRoot(), PlayerRoot() }) {
+		for (const Resolved& root : roots) {
 			if (!root.node)
 				continue;
 			const Search s = SearchUnder(root.node, name, {}, 1);
 			if (!s.matches.empty())
 				return s.matches.front();
 		}
+		if (!a_root.empty())
+			throw ToolError(404, std::format("node '{}' not found in the {} skeleton", a_name, a_root == "player" ? "body" : "first-person"));
 		throw ToolError(404, std::format("node '{}' not found in the VR node table, the first-person skeleton or the body skeleton", a_name));
 	}
 

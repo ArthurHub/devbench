@@ -43,8 +43,9 @@ namespace dvb::vrhost
 
 	/// World position of the in-game node Reach measures for one Controller.
 	ReachLogic::Vec3 ReachHandWorld(bool a_right);
-	/// World position of a Reach target node, looked up by name. Throws ToolError(404) when absent.
-	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name);
+	/// World position of a Reach target node, looked up by name in a_root ("player" = body,
+	/// "firstPerson", empty = the platform's default order). Throws ToolError(404) when absent.
+	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name, const std::string& a_root = {});
 	/// The player's heading in radians (game yaw, 0 = +Y, increasing clockwise seen from above).
 	double PlayerYaw();
 }

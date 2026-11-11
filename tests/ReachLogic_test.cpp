@@ -692,3 +692,48 @@ TEST_CASE("ApproachAndHoldDurationMs is the last frame time")
 		CHECK(frames.back()["tMs"].get<long>() == ApproachAndHoldDurationMs(hold));
 	}
 }
+
+TEST_CASE("CalibrationReusable holds within half a degree, around the circle")
+{
+	constexpr double kPi = 3.14159265358979323846;
+	const double     quarterDeg = 0.25 * kPi / 180.0;
+	CHECK(CalibrationReusable(1.0, 1.0));
+	CHECK(CalibrationReusable(1.0, 1.0 + quarterDeg));
+	CHECK(!CalibrationReusable(1.0, 1.0 + 4 * quarterDeg));
+	CHECK(CalibrationReusable(kPi - quarterDeg / 2, -kPi + quarterDeg / 2));
+	CHECK(CalibrationReusable(0.0, 2.0 * kPi));
+	CHECK(!CalibrationReusable(0.0, kPi));
+}
+
+TEST_CASE("ParseReach reads a hand's root and calibrate")
+{
+	std::string error;
+	auto        request = Parse(R"({"hands":{"left":{"node":"Chest","root":"player"}},"calibrate":"always"})", error);
+	CHECK(request.has_value());
+	if (!request)
+		return;
+	CHECK(request->left->root == "player");
+	CHECK(request->recalibrate);
+
+	request = Parse(R"({"hands":{"right":{"node":"hmdNode"}}})", error);
+	CHECK(request.has_value());
+	if (!request)
+		return;
+	CHECK(request->right->root.empty());
+	CHECK(!request->recalibrate);
+
+	CHECK(!Parse(R"({"hands":{"left":{"node":"Chest","root":"scene"}}})", error).has_value());
+	CHECK(error.find("root") != std::string::npos);
+	CHECK(!Parse(R"({"hands":{"left":{"node":"Chest"}},"calibrate":"never"})", error).has_value());
+	CHECK(error.find("calibrate") != std::string::npos);
+}
+
+TEST_CASE("ProgressJson reports how each hand was calibrated")
+{
+	Progress progress;
+	CHECK(!ProgressJson(progress).contains("calibration"));
+	progress.calibrationLeft = "reused";
+	json result = ProgressJson(progress);
+	CHECK(result["calibration"]["left"] == "reused");
+	CHECK(!result["calibration"].contains("right"));
+}

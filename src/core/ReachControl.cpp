@@ -193,10 +193,10 @@ namespace dvb::ReachControl
 			return result.at("yaw").get<double>();
 		}
 
-		RL::Vec3 ReadNodeWorld(const std::string& a_name)
+		RL::Vec3 ReadNodeWorld(const std::string& a_name, const std::string& a_root = {})
 		{
-			return Vec3From(dvb::MainThread::RunAndWait([a_name]() -> json {
-				return Vec3Json(vrhost::ReachNodeWorld(a_name));
+			return Vec3From(dvb::MainThread::RunAndWait([a_name, a_root]() -> json {
+				return Vec3Json(vrhost::ReachNodeWorld(a_name, a_root));
 			}));
 		}
 
@@ -207,10 +207,10 @@ namespace dvb::ReachControl
 			}));
 		}
 
-		RL::Vec3 WorldTarget(const std::string& a_node, double a_front, const RL::Vec3& a_offset, const RL::Vec3& a_facing)
+		RL::Vec3 WorldTarget(const RL::HandTarget& a_target, const RL::Vec3& a_facing)
 		{
-			const RL::Vec3 node = ReadNodeWorld(a_node);
-			return RL::Add(node, RL::Add(RL::Scale(a_facing, a_front), a_offset));
+			const RL::Vec3 node = ReadNodeWorld(a_target.node, a_target.root);
+			return RL::Add(node, RL::Add(RL::Scale(a_facing, a_target.front), a_target.offset));
 		}
 
 		std::optional<RL::HandProgress> MeasureHand(const std::optional<RL::HandTarget>& a_target, bool a_right, const RL::Vec3& a_facing)
@@ -218,7 +218,7 @@ namespace dvb::ReachControl
 			if (!a_target)
 				return std::nullopt;
 			const RL::Vec3 hand = ReadHandWorld(a_right);
-			const RL::Vec3 node = ReadNodeWorld(a_target->node);
+			const RL::Vec3 node = ReadNodeWorld(a_target->node, a_target->root);
 			const RL::Vec3 target = RL::Add(node, RL::Add(RL::Scale(a_facing, a_target->front), a_target->offset));
 			return RL::HandProgress{ hand, node, RL::Sub(target, hand) };
 		}
@@ -272,6 +272,52 @@ namespace dvb::ReachControl
 			return *cal;
 		}
 
+		/**
+		 * A hand's last measured calibration and the player yaw it was measured at. Reach reuses
+		 * it while the yaw holds, re-measuring only its rest point, and drops it after a run
+		 * that did not converge.
+		 */
+		struct CachedCalibration
+		{
+			RL::Calibration calibration;
+			double          yaw = 0.0;
+		};
+
+		std::mutex                       g_calibrationMutex;
+		std::optional<CachedCalibration> g_calibration[2];  // [0] left, [1] right
+
+		std::optional<RL::Calibration> ReusableCalibration(bool a_right, double a_yaw)
+		{
+			std::lock_guard lock(g_calibrationMutex);
+			const auto&     cached = g_calibration[a_right ? 1 : 0];
+			if (cached && RL::CalibrationReusable(cached->yaw, a_yaw))
+				return cached->calibration;
+			return std::nullopt;
+		}
+
+		void StoreCalibration(bool a_right, const std::optional<RL::Calibration>& a_calibration, double a_yaw)
+		{
+			std::lock_guard lock(g_calibrationMutex);
+			auto&           slot = g_calibration[a_right ? 1 : 0];
+			if (a_calibration)
+				slot = CachedCalibration{ *a_calibration, a_yaw };
+			else
+				slot.reset();
+		}
+
+		/**
+		 * Holds both hands at rest and returns where the game puts each requested hand once the
+		 * pose has settled: the rest point a reused calibration is anchored to.
+		 */
+		std::pair<RL::Vec3, RL::Vec3> MeasureRest(const RL::Pose& a_hmd, const RestPose& a_rest, SequenceGuard& a_guard, const std::shared_ptr<Run>& a_run)
+		{
+			const long settle = RL::CalibrationSampleMs(0);
+			const auto t0 = std::chrono::steady_clock::now();
+			a_guard.Start(RL::ApproachAndHoldFrames(a_hmd, a_rest.left, a_rest.left, a_rest.right, a_rest.right, settle + 1000), kCalibrationTailMs);
+			SleepUntil(a_run, t0 + std::chrono::milliseconds(settle));
+			return { ReadHandWorld(false), ReadHandWorld(true) };
+		}
+
 		void RunWorker(std::shared_ptr<Run> a_run, RL::ReachRequest a_req, ToolContext a_ctx)
 		{
 			SequenceGuard    guard(a_run->owner, a_ctx);
@@ -284,19 +330,59 @@ namespace dvb::ReachControl
 				const RestPose rest = ReadRestPose();
 				const RL::Pose calibHmd = RL::Upright(rest.hmd);
 
+				// A cached calibration is reused while the player faces the same way: one rest
+				// sample re-anchors it instead of four legs per hand.
 				std::optional<RL::Calibration> calLeft;
 				std::optional<RL::Calibration> calRight;
-				if (a_req.left)
+				if (!a_req.recalibrate) {
+					if (a_req.left)
+						calLeft = ReusableCalibration(false, yaw);
+					if (a_req.right)
+						calRight = ReusableCalibration(true, yaw);
+				}
+				const bool reuseLeft = calLeft.has_value();
+				const bool reuseRight = calRight.has_value();
+				if (reuseLeft || reuseRight) {
+					const auto [restLeft, restRight] = MeasureRest(calibHmd, rest, guard, a_run);
+					if (reuseLeft)
+						calLeft->rest = restLeft;
+					if (reuseRight)
+						calRight->rest = restRight;
+				}
+
+				// Where calibration leaves the hands: the last measured hand on its +z leg.
+				const RL::Vec3 lastLeg{ 0.0, 0.0, kCalibrationStep };
+				RL::Vec3       heldLeft = rest.left;
+				RL::Vec3       heldRight = rest.right;
+				if (a_req.left && !reuseLeft) {
 					calLeft = CalibrateHand(false, calibHmd, rest.left, rest.right, kCalibrationStep, guard, a_run);
-				if (a_req.right)
+					heldLeft = RL::Add(rest.left, lastLeg);
+				}
+				if (a_req.right && !reuseRight) {
 					calRight = CalibrateHand(true, calibHmd, rest.right, rest.left, kCalibrationStep, guard, a_run);
+					heldLeft = rest.left;
+					heldRight = RL::Add(rest.right, lastLeg);
+				}
+				{
+					std::lock_guard lock(g_mutex);
+					if (a_req.left)
+						a_run->progress.calibrationLeft = reuseLeft ? "reused" : "measured";
+					if (a_req.right)
+						a_run->progress.calibrationRight = reuseRight ? "reused" : "measured";
+				}
+				const auto storeCalibrations = [&](bool a_converged) {
+					if (a_req.left)
+						StoreCalibration(false, a_converged ? calLeft : std::nullopt, yaw);
+					if (a_req.right)
+						StoreCalibration(true, a_converged ? calRight : std::nullopt, yaw);
+				};
 
 				RL::Vec3 trackLeft = rest.left;
 				RL::Vec3 trackRight = rest.right;
 				if (a_req.left)
-					trackLeft = RL::TrackingFor(*calLeft, rest.left, WorldTarget(a_req.left->node, a_req.left->front, a_req.left->offset, facing));
+					trackLeft = RL::TrackingFor(*calLeft, rest.left, WorldTarget(*a_req.left, facing));
 				if (a_req.right)
-					trackRight = RL::TrackingFor(*calRight, rest.right, WorldTarget(a_req.right->node, a_req.right->front, a_req.right->offset, facing));
+					trackRight = RL::TrackingFor(*calRight, rest.right, WorldTarget(*a_req.right, facing));
 
 				RL::Pose hmd = RL::Upright(rest.hmd);
 				if (a_req.head.aim != RL::HeadTarget::Aim::kNone) {
@@ -322,12 +408,9 @@ namespace dvb::ReachControl
 
 				SetPhase(a_run, RL::Phase::kReaching);
 
-				// Every sequence blends from where the previous one left the hands, so nothing
-				// snaps. Calibration ends with the last calibrated hand on its +z leg and the
-				// other at rest; a lead-in carries them to approachUnits behind the targets.
-				const RL::Vec3 lastLeg{ 0.0, 0.0, kCalibrationStep };
-				RL::Vec3       heldLeft = a_req.right ? rest.left : RL::Add(rest.left, lastLeg);
-				RL::Vec3       heldRight = a_req.right ? RL::Add(rest.right, lastLeg) : rest.right;
+				// Every sequence blends from where the previous one left the hands (heldLeft /
+				// heldRight), so nothing snaps; a lead-in carries them to approachUnits behind
+				// the targets.
 				RL::Vec3       approachLeft = trackLeft;
 				RL::Vec3       approachRight = trackRight;
 				const RL::Vec3 back = RL::Scale(facing, -a_req.approachUnits);
@@ -371,6 +454,7 @@ namespace dvb::ReachControl
 					}
 
 					if (RL::Converged(worst, a_req.toleranceUnits)) {
+						storeCalibrations(true);
 						if (!last) {
 							guard.Start(RL::ApproachAndHoldFrames(hmd, trackLeft, trackLeft, trackRight, trackRight, a_req.holdMs), kSequenceTailMs);
 							sequenceEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(RL::ApproachAndHoldDurationMs(a_req.holdMs));
@@ -393,6 +477,7 @@ namespace dvb::ReachControl
 						continue;
 					}
 
+					storeCalibrations(false);
 					SetPhase(a_run, RL::Phase::kHolding);
 					SleepUntil(a_run, sequenceEnd);
 					SetError(a_run, std::format("did not reach tolerance after {} iterations", iterations));
@@ -529,10 +614,15 @@ namespace dvb::ReachControl
 
 	void EndSession()
 	{
-		std::lock_guard lock(g_mutex);
-		for (const auto& candidate : g_runs) {
-			if (candidate->active.load())
-				candidate->stop.store(true);
+		{
+			std::lock_guard lock(g_mutex);
+			for (const auto& candidate : g_runs) {
+				if (candidate->active.load())
+					candidate->stop.store(true);
+			}
 		}
+		std::lock_guard lock(g_calibrationMutex);
+		g_calibration[0].reset();
+		g_calibration[1].reset();
 	}
 }

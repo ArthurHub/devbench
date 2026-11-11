@@ -868,9 +868,11 @@ namespace dvb
 			"it calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the hand and "
 			"target nodes after each settle (the body follows the arms, so a node moves when a hand reaches it) and corrects "
 			"until every hand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a "
-			"node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | "
+			"node. A hand's calibration from a reach that converged is reused while the player faces the same way (within "
+			"0.5 deg), re-anchored by one rest sample; calibrate='always' measures it again, and a load drops it. "
+			"It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | "
 			"reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, "
-			"error, active, stopping (a stop was requested and the run is still releasing) }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both "
+			"calibration { left?, right?: measured | reused }, error, active, stopping (a stop was requested and the run is still releasing) }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both "
 			"controllers like a sequence, and it ends at a load. Fingers are not driven.";
 		input.inputSchema = json{
 			{ "type", "object" },
@@ -891,7 +893,8 @@ namespace dvb
 								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
 								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
 								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
-								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand" } } },
+								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,root?,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; root 'firstPerson' searches the first-person 3D instead of the body ('player', default); at least one hand" } } },
+								{ "calibrate", json{ { "type", "string" }, { "enum", json::array({ "auto", "always" }) }, { "description", "reach: 'auto' (default) reuses a hand's calibration while the player's yaw is unchanged; 'always' measures it again" } } },
 								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters, e.g. 1.6 to frame low targets from standing height" } } },
 								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },
 								{ "iterations", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 10 }, { "description", "reach: correction passes (default 4)" } } },

@@ -93,9 +93,9 @@ namespace dvb::vrhost
 		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
 
-	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name)
+	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name, const std::string& a_root)
 	{
-		const auto& t = FindPlayerNode(a_name)->world.translate;
+		const auto& t = FindPlayerNode(a_name, a_root)->world.translate;
 		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
 
