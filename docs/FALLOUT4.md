@@ -340,9 +340,13 @@ Three engine facts it is built around, worth not rediscovering:
   load. After that, the menu empties it into its history on the next UI pass. That pass
   never runs inside a task, so a capture sees the output either way.
 - **The buffer holds 65,534 bytes, and the engine silently drops a line that would pass
-  that.** It only fills while the Console menu has never been opened. `bufferNearlyFull`
-  warns when output may be missing; opening and closing the console once clears it for
-  the rest of the session.
+  that.** It only fills while the Console menu has never been opened, so a capture that
+  finds the menu missing from the menu map first shows and hides it (`madeConsoleMenu`
+  reports that call). `bufferNearlyFull` still warns when output may be missing, which now
+  means the menu could not be made yet. Checked live on FO4VR 1.2.72 (2026-11-11): at the
+  main menu of a fresh launch the first capture answered `madeConsoleMenu: true` with its
+  output, the buffer then read size 0 (capacity 127, so it had been drained), the next
+  capture did not make it again, and no Console stayed open.
 
 The console's history shows the command line above its output, as when typed.
 
