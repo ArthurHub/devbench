@@ -1,4 +1,4 @@
-#include "core/ReachControl.h"
+#include "ReachControl.h"
 
 #include "core/Log.h"
 #include "core/MainThread.h"
@@ -37,9 +37,9 @@ namespace dvb::ReachControl
 		constexpr long        kCalibrationTailMs = 1000;
 
 		/**
-		 * Tracking-space rest pose Reach calibrates around and returns to: the HMD over the
-		 * origin and both controllers 0.25 m to the side and 0.3 m in front, at the heights
-		 * the platform asks for (vrhost::ReachRestStance).
+		 * Tracking-space rest pose Reach calibrates around and returns to: the HMD 3 cm over the
+		 * origin and both controllers at the origin's height, 0.25 m to the side and 0.3 m in
+		 * front. That is the pose Skyrim's Reach has been verified with.
 		 */
 		struct RestPose
 		{
@@ -50,8 +50,9 @@ namespace dvb::ReachControl
 
 		RestPose ReadRestPose()
 		{
-			const auto stance = vrhost::ReachRestStance();
-			return RestPose{ { 0.0, stance.eyeHeight, 0.0 }, { -0.25, stance.handHeight, -0.3 }, { 0.25, stance.handHeight, -0.3 } };
+			constexpr double kEyeHeight = 0.03;
+			constexpr double kHandHeight = 0.0;
+			return RestPose{ { 0.0, kEyeHeight, 0.0 }, { -0.25, kHandHeight, -0.3 }, { 0.25, kHandHeight, -0.3 } };
 		}
 
 		struct Run
@@ -503,6 +504,7 @@ namespace dvb::ReachControl
 		}
 	}
 
+	/// Starts an asynchronous reach run and returns {queued, runId, owner, contract}.
 	json Start(const json& a_args, const std::string& a_owner, const ToolContext& a_ctx)
 	{
 		std::string error;
@@ -547,6 +549,7 @@ namespace dvb::ReachControl
 		};
 	}
 
+	/// Reports progress for a run (the latest run when 'runId' is omitted).
 	json Status(const json& a_args)
 	{
 		std::optional<long> runId;
@@ -582,6 +585,7 @@ namespace dvb::ReachControl
 		return result;
 	}
 
+	/// Requests the active run to stop; the owner must match.
 	json Stop(const std::string& a_owner)
 	{
 		std::lock_guard      lock(g_mutex);
@@ -602,14 +606,32 @@ namespace dvb::ReachControl
 		};
 	}
 
-	bool Active()
+	std::vector<std::string> Actions()
 	{
-		std::lock_guard lock(g_mutex);
-		for (const auto& candidate : g_runs) {
-			if (candidate->active.load())
-				return true;
+		return { "reach", "reachStatus", "reachStop" };
+	}
+
+	bool IsAction(const std::string& a_action)
+	{
+		return a_action == "reach" || a_action == "reachStatus" || a_action == "reachStop";
+	}
+
+	/**
+	 * Resolves the owner as every vrTrackedSet action does, so 'press' over a reach hold matches
+	 * the run's owner; malformed JSON answers 400 as the shared actions do.
+	 */
+	json Handle(const std::string& a_action, const json& a_args, const ToolContext& a_ctx)
+	{
+		try {
+			if (a_action == "reachStatus")
+				return Status(a_args);
+			const std::string owner = ResolveVRInputOwner(a_args, a_ctx);
+			if (a_action == "reach")
+				return Start(a_args, owner, a_ctx);
+			return Stop(owner);
+		} catch (const json::exception& e) {
+			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}
-		return false;
 	}
 
 	void EndSession()

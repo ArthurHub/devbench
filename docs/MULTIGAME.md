@@ -62,8 +62,10 @@ core/GameState.h   CurrentFrame()
 ```
 
 Later seams follow the same pattern: `core/gfx/Device.h` for the graphics device and
-`core/VRHost.h` for OpenVR (interfaces, controller indices, the hand and node reads Reach
-needs), which is what lets VR input live in the core for both games.
+`core/VRHost.h` for OpenVR (interfaces, controller indices, the hand and node reads Pose
+needs, each platform's extra input actions), which is what lets VR input live in the core
+for both games. How each game places the hands stays its own: Fallout's Pose is core code
+behind the seam, Skyrim's calibrated Reach is Skyrim platform code.
 
 Free functions, one definition per platform, resolved at link time. **Not** an `IHost`
 vtable — that choice is load-bearing: an interface object would have meant touching every

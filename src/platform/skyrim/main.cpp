@@ -9,6 +9,7 @@
 #include "GameEvents.h"
 #include "InputHotkeys.h"
 #include "KeyboardInput.h"
+#include "ReachControl.h"
 #include "Recording.h"
 #include "RecordingsMenu.h"
 #include "StallWatchdog.h"
@@ -187,9 +188,11 @@ namespace
 			// main thread, so the keyboard layer hands cleanup to a worker and returns immediately.
 			if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame) {
 				dvb::ReleaseKeyboardInputForLifecycle("preLoadGame");
+				dvb::ReachControl::EndSession();  // a reach never carries into another game
 				dvb::ReleaseVRInputForLifecycle("preLoadGame");
 			} else if (a_msg->type == SKSE::MessagingInterface::kNewGame) {
 				dvb::ReleaseKeyboardInputForLifecycle("newGame");
+				dvb::ReachControl::EndSession();
 				dvb::ReleaseVRInputForLifecycle("newGame");
 			}
 

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace vr
 {
@@ -14,13 +15,14 @@ namespace vr
 
 // The VR input seam.
 //
-// Everything the core's VR input (core/VRInput.cpp) and Reach (core/ReachControl.cpp) need
-// from the game. Each platform links exactly one definition of these functions; a platform
-// without VR input returns nullptr from the interface getters, which keeps the input API
-// reporting "not ready" instead of failing to link.
+// Everything the core's VR input (core/VRInput.cpp) and Pose (core/PoseControl.cpp) need from
+// the game; Skyrim's Reach (platform/skyrim/ReachControl.cpp) reads the hand and node through
+// it too. Each platform links exactly one definition of these functions; a platform without VR
+// input returns nullptr from the interface getters, which keeps the input API reporting "not
+// ready" instead of failing to link.
 //
-// Threading: the interface getters and ReachRestStance are callable from any thread. Everything
-// else is called on the game's main thread (the core marshals with MainThread::RunAndWait first).
+// Threading: the interface getters and PlatformActions are callable from any thread. Everything else is called on
+// the game's main thread (the core marshals with MainThread::RunAndWait first).
 namespace dvb::vrhost
 {
 	/// The game's own OpenVR system interface (IVRSystem_019 ABI), or nullptr while unavailable.
@@ -33,15 +35,11 @@ namespace dvb::vrhost
 	/// the game's controller devices are unavailable.
 	std::pair<std::uint32_t, std::uint32_t> SetControllerIndices(std::uint32_t a_left, std::uint32_t a_right);
 
-	/// Tracking-space heights, in meters, of the pose Reach calibrates around and rests in.
-	struct ReachStance
-	{
-		double eyeHeight;   ///< the injected HMD
-		double handHeight;  ///< both resting Controllers
-	};
-	ReachStance ReachRestStance();
+	/// The vrTrackedSet actions this platform answers beside the shared ones, for capabilities:
+	/// Fallout's pose, Skyrim's reach actions. Callable from any thread.
+	std::vector<std::string> PlatformActions();
 
-	/// World position of the in-game node Reach measures for one Controller.
+	/// World position of the in-game node Pose and Reach measure for one Controller.
 	ReachLogic::Vec3 ReachHandWorld(bool a_right);
 	/// World position of a Reach target node, looked up by name in a_root ("player" = body,
 	/// "firstPerson", empty = the platform's default order). Throws ToolError(404) when absent.

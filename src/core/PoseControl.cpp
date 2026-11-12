@@ -2,7 +2,6 @@
 
 #include "core/MainThread.h"
 #include "core/PoseLogic.h"
-#include "core/ReachControl.h"
 #include "core/VRHost.h"
 #include "core/VRInput.h"
 
@@ -203,8 +202,6 @@ namespace dvb::PoseControl
 		const json status = dvb::HandleVRInput(json{ { "action", "status" } }, a_ctx);
 		if (!status.value("ready", false))
 			throw ToolError(503, "OpenVR is not ready");
-		if (ReachControl::Active())
-			throw ToolError(409, "a reach run holds the devices; stop it first");
 
 		std::lock_guard lock(g_mutex);
 		const auto      started = std::chrono::steady_clock::now();

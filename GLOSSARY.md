@@ -27,7 +27,7 @@ A bounded, timed list of Frames that devbench plays in place of the physical Tra
 _Avoid_: recording, replay (those name a separate feature)
 
 **Reach**:
-Driving the Controllers until their in-game nodes (Wands on Fallout 4 VR) reach a target relative to a named node, correcting against where they actually land.
+Skyrim's way of placing the hands: calibrating how a tracking-space move shows up at the hand bones, then driving the Controllers until the hands reach a target relative to a named node, correcting against where they actually land. Fallout 4 VR uses Pose instead.
 _Avoid_: move hand
 
 **Pose**:

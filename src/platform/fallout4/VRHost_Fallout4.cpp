@@ -74,17 +74,13 @@ namespace dvb::vrhost
 		return { a_left, a_right };
 	}
 
-	/**
-	 * Standing: eyes at 1.65 m and hands at waist height, so a body mod such as FRIK holds the
-	 * player upright while Reach runs instead of folding the body down to a head on the floor.
-	 */
-	ReachStance ReachRestStance()
+	std::vector<std::string> PlatformActions()
 	{
-		return { 1.65, 1.0 };
+		return { "pose" };
 	}
 
 	/**
-	 * Reach measures the Wand, which the game places straight from the controller pose with
+	 * Pose measures the Wand, which the game places straight from the controller pose with
 	 * no body IK, so it exists with or without FRIK.
 	 */
 	ReachLogic::Vec3 ReachHandWorld(bool a_right)

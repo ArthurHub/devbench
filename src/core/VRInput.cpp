@@ -5,7 +5,6 @@
 #include "core/Log.h"
 #include "core/MainThread.h"
 #include "core/PoseControl.h"
-#include "core/ReachControl.h"
 #include "core/ToolRegistry.h"
 #include "core/VRHost.h"
 #include "core/VRInputState.h"
@@ -410,7 +409,7 @@ namespace dvb
 				}
 				std::lock_guard lock(m_mutex);
 				if (!m_transaction.Active())
-					throw ToolError(409, "press needs an active sequence (or a reach run that is holding) to lay the buttons over");
+					throw ToolError(409, "press needs an active sequence (a pose hold, or a reach run that is holding, is one) to lay the buttons over");
 				if (m_transaction.Owner() != a_owner)
 					throw ToolError(409, std::format("the active sequence is owned by '{}' (not '{}'); press as its owner",
 											 m_transaction.Owner(), a_owner));
@@ -1051,6 +1050,9 @@ namespace dvb
 
 	json VRInputCapabilities()
 	{
+		json actions = json::array({ "status", "observe", "sequence", "stop", "releaseAll", "press" });
+		for (const auto& action : vrhost::PlatformActions())
+			actions.push_back(action);
 		return json{
 			{ "version", json{ { "major", kVRContractVersion },
 							 { "minor", kVRContractMinorVersion } } },
@@ -1059,7 +1061,7 @@ namespace dvb
 			{ "device", kDevice },
 			{ "atomicDevices", json::array({ "hmd", "left", "right" }) },
 			{ "injection", "OpenVR IVRCompositor poses + IVRSystem controller state" },
-			{ "actions", json::array({ "status", "observe", "sequence", "stop", "releaseAll", "press" }) },
+			{ "actions", std::move(actions) },
 			{ "pressButtons", VRPressButtonsJson() },
 			{ "timing", "steadyMillisecondsFromSequenceStart" },
 			{ "ordering", "tMs then seq" },
@@ -1089,6 +1091,11 @@ namespace dvb
 		return VRTrackedSetManager::Get().HeldBy(a_owner, a_controlToken);
 	}
 
+	std::string ResolveVRInputOwner(const json& a_args, const ToolContext& a_ctx)
+	{
+		return ResolveOwner(a_args, a_ctx);
+	}
+
 	json HandleVRInput(const json& a_args, const ToolContext& a_ctx)
 	{
 		try {
@@ -1099,15 +1106,9 @@ namespace dvb
 				return VRTrackedSetManager::Get().Status();
 			if (action == "observe")
 				return ObservePhysicalTrackedSet();
-			if (action == "reachStatus")
-				return ReachControl::Status(a_args);
 			const std::string owner = ResolveOwner(a_args, a_ctx);
 			if (action == "sequence")
 				return VRTrackedSetManager::Get().Start(a_args, owner, a_ctx.internal);
-			if (action == "reach")
-				return ReachControl::Start(a_args, owner, a_ctx);
-			if (action == "reachStop")
-				return ReachControl::Stop(owner);
 			if (action == "pose")
 				return PoseControl::Place(a_args, owner, a_ctx);
 			if (action == "press")
@@ -1120,7 +1121,7 @@ namespace dvb
 					a_ctx.internal,
 					action == "releaseAll" ? "releaseAll" : "request");
 			}
-			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|reach|reachStatus|reachStop|pose)", action));
+			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|pose)", action));
 		} catch (const json::exception& e) {
 			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}
@@ -1160,7 +1161,6 @@ namespace dvb
 	{
 		if (!g_vrReady.load(std::memory_order_relaxed))
 			return;
-		ReachControl::EndSession();
 		const std::string reason = a_reason ? a_reason : "lifecycle";
 		try {
 			VRTrackedSetManager::Get().StopForLifecycle(reason);

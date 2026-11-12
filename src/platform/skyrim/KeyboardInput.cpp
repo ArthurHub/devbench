@@ -1,6 +1,7 @@
 #include "KeyboardInput.h"
 
 #include "GameClock.h"
+#include "ReachControl.h"
 #include "core/EventBus.h"
 #include "core/GameState.h"
 #include "core/KeyboardInputState.h"
@@ -782,8 +783,12 @@ namespace dvb
 			if (a_args.contains("device") && !a_args["device"].is_string())
 				throw ToolError(400, "'device' must be a string");
 			const std::string device = a_args.value("device", std::string("keyboard"));
-			if (IsVRInputDevice(device))
+			if (IsVRInputDevice(device)) {
+				// Reach is Skyrim's own; the shared VR input core knows only sequences and pose.
+				if (ReachControl::IsAction(action))
+					return ReachControl::Handle(action, a_args, a_ctx);
 				return HandleVRInput(a_args, a_ctx);
+			}
 			if (device != "keyboard")
 				throw ToolError(400, "input contract v2 supports device='keyboard' or device='vrTrackedSet'");
 			if (action == "status")

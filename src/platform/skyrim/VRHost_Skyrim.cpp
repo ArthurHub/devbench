@@ -1,5 +1,7 @@
 #include "core/VRHost.h"
 
+#include "ReachControl.h"
+
 #include "core/ToolRegistry.h"
 
 #include <RE/B/BSFixedString.h>
@@ -65,13 +67,9 @@ namespace dvb::vrhost
 		return previous;
 	}
 
-	/**
-	 * Head 3 cm above the tracking origin with the hands at the origin's height: the pose
-	 * Skyrim's Reach has been verified with.
-	 */
-	ReachStance ReachRestStance()
+	std::vector<std::string> PlatformActions()
 	{
-		return { 0.03, 0.0 };
+		return ReachControl::Actions();
 	}
 
 	/**
