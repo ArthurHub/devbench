@@ -12,8 +12,8 @@
 // HMD alone: world = hmdWorld + turn(theta) * unitsPerMeter * game(tracking - hmdTracking),
 // where game() swaps OpenVR's axes (x right, y up, -z forward) into the world's (x right,
 // y forward, z up) and theta, the turn between tracking space and the world, is fitted from
-// where the held Wands land. The head stays at one eye position and only pitches, so the HMD
-// node does not move between placements.
+// where the held Wands land. The head stays at one eye position and only turns (pitch and
+// yaw), so the HMD node does not move between placements.
 namespace dvb::PoseLogic
 {
 	using ReachLogic::Pose;
@@ -48,6 +48,25 @@ namespace dvb::PoseLogic
 		std::optional<HandAim> aim;
 	};
 
+	/// What head.lookAt aims at: a held or placed hand, the midpoint of both, a player node, or a
+	/// world point. It resolves once into head angles; the hold keeps the angles, not the target.
+	struct HeadLook
+	{
+		enum class Kind
+		{
+			kLeft,
+			kRight,
+			kHands,
+			kNode,
+			kWorld
+		};
+		Kind        kind{ Kind::kHands };
+		std::string node;
+		/// As HandPlacement::root, for a node target.
+		std::string root;
+		Vec3        world;
+	};
+
 	struct PoseRequest
 	{
 		/// Absent: the hand stays where the held pose has it.
@@ -55,10 +74,14 @@ namespace dvb::PoseLogic
 		std::optional<HandPlacement> right;
 		/// Degrees, negative looks down; absent keeps the held head (the ready pitch on a fresh hold).
 		std::optional<double> headPitch;
-		long                  moveMs{ 300 };
-		long                  holdMs{ 600000 };
-		double                toleranceUnits{ 1.0 };
-		int                   corrections{ 2 };
+		/// Degrees in tracking space, positive turns left; absent keeps the held head.
+		std::optional<double> headYaw;
+		/// Exclusive with headPitch / headYaw, which it computes.
+		std::optional<HeadLook> lookAt;
+		long                    moveMs{ 300 };
+		long                    holdMs{ 60000 };
+		double                  toleranceUnits{ 1.0 };
+		int                     corrections{ 2 };
 		/// head.eyeHeight, tracking meters; overrides the eye height derived from cameraHeight.
 		std::optional<double> eyeHeight;
 		/// head.cameraHeight, world units above the player's feet the camera should sit at;
@@ -72,7 +95,9 @@ namespace dvb::PoseLogic
 	/// The ready pose, chosen in the headset: the head pitched down, the hands in front at chest
 	/// height and swung left so the desktop mirror (the left eye) shows them. Tracking meters
 	/// relative to the eyes; the controllers point forward and a little down.
-	inline constexpr double  kReadyHeadPitchDeg = -22.0;
+	inline constexpr double kReadyHeadPitchDeg = -22.0;
+	/// The head preset "down": looking at the body, low enough to show the belt.
+	inline constexpr double  kDownHeadPitchDeg = -75.0;
 	inline constexpr double  kReadyForward = 0.60;
 	inline constexpr double  kReadySide = 0.19;
 	inline constexpr double  kReadyBelow = 0.40;
@@ -84,7 +109,15 @@ namespace dvb::PoseLogic
 	inline constexpr double kEyeHeightMin = 0.3;
 	inline constexpr double kEyeHeightMax = 2.5;
 	inline constexpr double kCameraHeightMax = 1000.0;
-	inline constexpr double kHeadPitchLimitDeg = 89.0;
+	/// The steepest head pitch, explicit or from lookAt: chosen in the headset, where the view
+	/// and a body mod's neck look wrong closer to vertical (a held pose stays stable either way).
+	inline constexpr double kHeadPitchLimitDeg = 85.0;
+	inline constexpr double kHeadYawLimitDeg = 180.0;
+	/// A lookAt target closer to the eyes than this (world units) has no direction to aim at.
+	inline constexpr double kLookAtMinUnits = 1.0;
+	/// A hand lookAt turns the head again once the hands land when its aim is off by more than
+	/// this (degrees): the first turn moves a body mod's body, and a node-placed hand with it.
+	inline constexpr double kLookAtReaimDeg = 0.5;
 	inline constexpr double kWorldLimit = 1.0e7;
 	inline constexpr long   kMoveMsMax = 5000;
 	inline constexpr int    kCorrectionsMax = 5;
@@ -125,6 +158,19 @@ namespace dvb::PoseLogic
 	/// A tracking-space position as a world point, anchored on the head.
 	Vec3 WorldFor(double a_theta, const Vec3& a_hmdTracking, const Vec3& a_hmdWorld, const Vec3& a_tracking, double a_unitsPerMeter);
 
+	/// Head angles aimed at a point; clamped is set when the pitch was clamped to the limit.
+	struct HeadAngles
+	{
+		double pitchDeg{ 0 };
+		double yawDeg{ 0 };
+		bool   clamped{ false };
+	};
+
+	/// The head pitch and yaw (tracking space, as Oriented takes them) that aim the eyes at
+	/// a_target, for a turn theta; nullopt when a_target is within kLookAtMinUnits of the eyes.
+	/// The pitch is clamped to +-kHeadPitchLimitDeg.
+	std::optional<HeadAngles> LookAngles(double a_theta, const Vec3& a_eyesWorld, const Vec3& a_target, double a_unitsPerMeter);
+
 	/// The held state a move goes from and to.
 	struct HeldPose
 	{
@@ -134,10 +180,11 @@ namespace dvb::PoseLogic
 		Vec3    right;
 		HandAim leftAim{ kReadyAim };
 		HandAim rightAim{ kReadyAim };
+		double  headYawDeg{ 0 };
 	};
 
 	/// Frames easing from a_from to a_to over a_moveMs (none when a_moveMs is 0), then hold
-	/// frames at a_to every kHoldStepMs for a_holdMs. The head stays at the eyes and only pitches;
+	/// frames at a_to every kHoldStepMs for a_holdMs. The head stays at the eyes and only turns;
 	/// the controllers turn with the move.
 	json MoveFrames(const HeldPose& a_from, const HeldPose& a_to, long a_moveMs, long a_holdMs);
 }

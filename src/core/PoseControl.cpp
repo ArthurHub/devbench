@@ -136,6 +136,39 @@ namespace dvb::PoseControl
 			return RL::Add(Vec3From(result.at("node")), RL::Add(RL::Scale(facing, a_placement.front), a_placement.offset));
 		}
 
+		/// Where a hand will be, for lookAt: its target in this call, else where its Wand is now.
+		RL::Vec3 HandLookPoint(const std::optional<PL::HandPlacement>& a_placement, bool a_right, const Held& a_held, const Reading& a_reading, double a_theta)
+		{
+			if (!a_placement)
+				return a_right ? a_reading.right : a_reading.left;
+			if (a_placement->kind == PL::HandPlacement::Kind::kReady)
+				return PL::WorldFor(a_theta, HmdTracking(a_held), a_reading.hmd, PL::ReadyHand(a_right, a_held.pose.eyeHeight), a_held.unitsPerMeter);
+			return WorldTarget(*a_placement);
+		}
+
+		/**
+		 * The world point head.lookAt aims at, read once before anything moves: a hand's target in
+		 * this call (or its Wand when the call leaves it), the midpoint of both, a node, or a point.
+		 */
+		RL::Vec3 LookPoint(const PL::HeadLook& a_look, const PL::PoseRequest& a_request, const Held& a_held, const Reading& a_reading, double a_theta)
+		{
+			switch (a_look.kind) {
+			case PL::HeadLook::Kind::kLeft:
+				return HandLookPoint(a_request.left, false, a_held, a_reading, a_theta);
+			case PL::HeadLook::Kind::kRight:
+				return HandLookPoint(a_request.right, true, a_held, a_reading, a_theta);
+			case PL::HeadLook::Kind::kHands:
+				return RL::Scale(RL::Add(HandLookPoint(a_request.left, false, a_held, a_reading, a_theta), HandLookPoint(a_request.right, true, a_held, a_reading, a_theta)), 0.5);
+			case PL::HeadLook::Kind::kWorld:
+				return a_look.world;
+			case PL::HeadLook::Kind::kNode:
+			default:
+				return Vec3From(dvb::MainThread::RunAndWait([a_look]() -> json {
+					return Vec3Json(vrhost::ReachNodeWorld(a_look.node, a_look.root));
+				}));
+			}
+		}
+
 		/**
 		 * Starts a fresh hold in the ready pose, at the eye height that stands the body naturally.
 		 * A non-empty a_replaceToken is the live hold's: the fresh one replaces it in place.
@@ -188,12 +221,28 @@ namespace dvb::PoseControl
 			g_held = StartHold(request, a_owner, continuing ? g_held->token : std::string{}, a_ctx);
 		Held& held = *g_held;
 
-		// The head first: a body mod leans the body with it, so node targets are read in the pitched pose.
-		if (request.headPitch && std::abs(*request.headPitch - held.pose.headPitchDeg) > 1e-6) {
-			PL::HeldPose to = held.pose;
-			to.headPitchDeg = *request.headPitch;
-			Move(held, to, request.moveMs, request.holdMs, a_ctx);
+		// lookAt resolves once into head angles; its point is read before anything moves.
+		PL::HeldPose head = held.pose;
+		if (request.headPitch)
+			head.headPitchDeg = *request.headPitch;
+		if (request.headYaw)
+			head.headYawDeg = *request.headYaw;
+		json look;
+		if (request.lookAt) {
+			const Reading  before = Read();
+			const double   thetaBefore = Turn(held, before);
+			const RL::Vec3 point = LookPoint(*request.lookAt, request, held, before, thetaBefore);
+			const auto     angles = PL::LookAngles(thetaBefore, before.hmd, point, held.unitsPerMeter);
+			if (!angles)
+				throw ToolError(400, "pose: 'head.lookAt' target is at the eyes");
+			head.headPitchDeg = angles->pitchDeg;
+			head.headYawDeg = angles->yawDeg;
+			look = json{ { "target", Vec3Json(point) }, { "clamped", angles->clamped } };
 		}
+
+		// The head first: a body mod leans and turns the body with it, so node targets are read in the turned pose.
+		if (std::abs(head.headPitchDeg - held.pose.headPitchDeg) > 1e-6 || std::abs(head.headYawDeg - held.pose.headYawDeg) > 1e-6)
+			Move(held, head, request.moveMs, request.holdMs, a_ctx);
 
 		// Ready hands need no reading; node and world targets go through the fitted turn.
 		PL::HeldPose            to = held.pose;
@@ -223,6 +272,25 @@ namespace dvb::PoseControl
 		if (request.right)
 			to.rightAim = request.right->aim.value_or(PL::kReadyAim);
 		Move(held, to, request.moveMs, request.holdMs, a_ctx);
+
+		// A hand lookAt aims again at where the Wands landed: the first turn moved the body, and a node-placed hand with it.
+		if (request.lookAt && request.lookAt->kind != PL::HeadLook::Kind::kNode && request.lookAt->kind != PL::HeadLook::Kind::kWorld) {
+			const Reading  landed = Read();
+			const RL::Vec3 point = request.lookAt->kind == PL::HeadLook::Kind::kLeft  ? landed.left :
+			                       request.lookAt->kind == PL::HeadLook::Kind::kRight ? landed.right :
+			                                                                            RL::Scale(RL::Add(landed.left, landed.right), 0.5);
+			const auto     angles = PL::LookAngles(Turn(held, landed), landed.hmd, point, held.unitsPerMeter);
+			const bool     off = angles && (std::abs(angles->pitchDeg - held.pose.headPitchDeg) > PL::kLookAtReaimDeg || std::abs(angles->yawDeg - held.pose.headYawDeg) > PL::kLookAtReaimDeg);
+			if (off) {
+				PL::HeldPose again = held.pose;
+				again.headPitchDeg = angles->pitchDeg;
+				again.headYawDeg = angles->yawDeg;
+				Move(held, again, request.moveMs, request.holdMs, a_ctx);
+				look["target"] = Vec3Json(point);
+				look["clamped"] = angles->clamped;
+			}
+			look["reaimed"] = off;
+		}
 
 		// Correct toward the world targets while a Wand misses: a body mod can move the target with the arm.
 		int     corrections = 0;
@@ -258,6 +326,7 @@ namespace dvb::PoseControl
 			{ "fresh", fresh },
 			{ "eyeHeight", held.pose.eyeHeight },
 			{ "headPitch", held.pose.headPitchDeg },
+			{ "headYaw", held.pose.headYawDeg },
 			{ "corrections", corrections },
 			{ "hands", json{ { "left", handJson(held.pose.left, held.pose.leftAim, reading.left, targetLeft) }, { "right", handJson(held.pose.right, held.pose.rightAim, reading.right, targetRight) } } },
 			{ "elapsedMs", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() },
@@ -265,6 +334,8 @@ namespace dvb::PoseControl
 		// only a node or world target fits the turn
 		if (mapped)
 			result["turnDeg"] = theta * 180.0 / 3.14159265358979323846;
+		if (!look.is_null())
+			result["lookAt"] = look;
 		return result;
 	}
 }

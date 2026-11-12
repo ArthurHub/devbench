@@ -93,7 +93,7 @@ TEST_CASE("ParsePose refuses malformed requests")
 	CHECK(!Parse(R"({"hands":{"left":{}}})", error).has_value());
 	CHECK(!Parse(R"({"hands":{"left":{"node":"Chest","root":"head"}}})", error).has_value());
 	CHECK(!Parse(R"({"head":{"pitch":-95}})", error).has_value());
-	CHECK(!Parse(R"({"head":{"lookAt":"hands"}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"back":0.5}})", error).has_value());
 	CHECK(!Parse(R"({"moveMs":-1})", error).has_value());
 	CHECK(!Parse(R"({"corrections":9})", error).has_value());
 	CHECK(!Parse(R"({"head":{"eyeHeight":4}})", error).has_value());
@@ -216,4 +216,128 @@ TEST_CASE("MoveFrames turns a controller to its aim with the move")
 	CHECK(forward(frames.back(), "left").z > 0.5);
 	// the other controller keeps the ready aim
 	CHECK(NearVec(forward(frames.back(), "right"), Vec3{ -ready[2], -ready[6], -ready[10] }));
+}
+
+TEST_CASE("MoveFrames turns the head's yaw with the move, at the eyes")
+{
+	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(false, 1.11), ReadyHand(true, 1.11) };
+	HeldPose to = from;
+	to.headYawDeg = 40.0;
+
+	const json frames = MoveFrames(from, to, 100, 1000);
+	const auto matrixOf = [](const json& a_frame) {
+		const json& m = a_frame["hmd"]["matrix"];
+		Pose        pose{};
+		for (std::size_t i = 0; i < 12; ++i)
+			pose[i] = m[i].get<double>();
+		return pose;
+	};
+	const Pose start = Oriented(Vec3{ 0.0, 1.11, 0.0 }, kReadyHeadPitchDeg, 0.0);
+	const Pose end = Oriented(Vec3{ 0.0, 1.11, 0.0 }, kReadyHeadPitchDeg, 40.0);
+	for (std::size_t i = 0; i < 12; ++i) {
+		CHECK(Near(matrixOf(frames.front())[i], start[i]));
+		CHECK(Near(matrixOf(frames.back())[i], end[i]));
+	}
+	CHECK(NearVec(Translation(frames.back(), "hmd"), Vec3{ 0.0, 1.11, 0.0 }));
+}
+
+TEST_CASE("ParsePose takes head presets, yaw and lookAt targets")
+{
+	std::string error;
+	const auto  ready = Parse(R"({"head":"ready"})", error);
+	CHECK(ready.has_value());
+	CHECK(Near(*ready->headPitch, kReadyHeadPitchDeg));
+	CHECK(Near(*ready->headYaw, 0.0));
+
+	const auto down = Parse(R"({"head":"down"})", error);
+	CHECK(Near(*down->headPitch, kDownHeadPitchDeg));
+	CHECK(Near(*down->headYaw, 0.0));
+
+	const auto turned = Parse(R"({"head":{"pitch":-10,"yaw":35}})", error);
+	CHECK(Near(*turned->headPitch, -10.0));
+	CHECK(Near(*turned->headYaw, 35.0));
+	CHECK(!turned->lookAt.has_value());
+
+	const auto left = Parse(R"({"head":{"lookAt":"left"}})", error);
+	CHECK(left->lookAt->kind == HeadLook::Kind::kLeft);
+	CHECK(!left->headPitch.has_value());
+	CHECK(Parse(R"({"head":{"lookAt":"right"}})", error)->lookAt->kind == HeadLook::Kind::kRight);
+	CHECK(Parse(R"({"head":{"lookAt":"hands"}})", error)->lookAt->kind == HeadLook::Kind::kHands);
+
+	const auto node = Parse(R"({"head":{"lookAt":"Chest","root":"player"}})", error);
+	CHECK(node->lookAt->kind == HeadLook::Kind::kNode);
+	CHECK(node->lookAt->node == "Chest");
+	CHECK(node->lookAt->root == "player");
+
+	const auto world = Parse(R"({"head":{"lookAt":[-1765,-1372,75]}})", error);
+	CHECK(world->lookAt->kind == HeadLook::Kind::kWorld);
+	CHECK(NearVec(world->lookAt->world, Vec3{ -1765, -1372, 75 }));
+
+	CHECK(Parse(R"({})", error)->holdMs == 60000);
+}
+
+TEST_CASE("ParsePose refuses a lookAt beside angles and malformed heads")
+{
+	std::string error;
+	CHECK(!Parse(R"({"head":{"lookAt":"hands","pitch":-20}})", error).has_value());
+	CHECK(error.find("lookAt") != std::string::npos);
+	CHECK(!Parse(R"({"head":{"lookAt":"left","yaw":10}})", error).has_value());
+	CHECK(!Parse(R"({"head":"up"})", error).has_value());
+	CHECK(!Parse(R"({"head":{"pitch":-87}})", error).has_value());
+	CHECK(Parse(R"({"head":{"pitch":-85}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"yaw":200}})", error).has_value());
+	CHECK(error.find("head.yaw") != std::string::npos);
+	CHECK(!Parse(R"({"head":{"root":"player"}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"lookAt":"hands","root":"player"}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"lookAt":"Chest","root":"head"}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"lookAt":5}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"lookAt":""}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"lookAt":[1,2]}})", error).has_value());
+	CHECK(!Parse(R"({"head":{"pos":[0,0,0]}})", error).has_value());
+}
+
+TEST_CASE("ParsePose takes hands 'ready' as both hands ready")
+{
+	std::string error;
+	const auto  both = Parse(R"({"hands":"ready","head":"ready"})", error);
+	CHECK(both.has_value());
+	CHECK(both->left->kind == HandPlacement::Kind::kReady);
+	CHECK(both->right->kind == HandPlacement::Kind::kReady);
+	CHECK(!Parse(R"({"hands":"wave"})", error).has_value());
+	CHECK(!Parse(R"({"hands":5})", error).has_value());
+}
+
+TEST_CASE("LookAngles aims the head's forward at the target through the turn")
+{
+	const Vec3 eyes{ 100.0, 200.0, 120.0 };
+	// no turn: the world's +y is tracking forward
+	const auto ahead = LookAngles(0.0, eyes, dvb::ReachLogic::Add(eyes, Vec3{ 0.0, 50.0, 0.0 }), 70.0);
+	CHECK(ahead.has_value());
+	CHECK(Near(ahead->pitchDeg, 0.0));
+	CHECK(Near(ahead->yawDeg, 0.0));
+	CHECK(!ahead->clamped);
+
+	const auto leftward = LookAngles(0.0, eyes, dvb::ReachLogic::Add(eyes, Vec3{ -50.0, 0.0, 0.0 }), 70.0);
+	CHECK(Near(leftward->yawDeg, 90.0));
+	const auto below = LookAngles(0.0, eyes, dvb::ReachLogic::Add(eyes, Vec3{ 0.0, 40.0, -40.0 }), 70.0);
+	CHECK(Near(below->pitchDeg, -45.0));
+	CHECK(Near(below->yawDeg, 0.0));
+
+	// straight down clamps to the pitch limit
+	const auto feet = LookAngles(0.0, eyes, dvb::ReachLogic::Add(eyes, Vec3{ 0.0, 0.0, -100.0 }), 70.0);
+	CHECK(Near(feet->pitchDeg, -kHeadPitchLimitDeg));
+	CHECK(feet->clamped);
+
+	// at the eyes there is no direction
+	CHECK(!LookAngles(0.0, eyes, dvb::ReachLogic::Add(eyes, Vec3{ 0.0, 0.5, 0.0 }), 70.0).has_value());
+
+	// with a turn, Oriented's forward at the angles points along the target's tracking offset
+	const double theta = 66.71 * kPi / 180.0;
+	const Vec3   target = dvb::ReachLogic::Add(eyes, Vec3{ 30.0, -20.0, -25.0 });
+	const auto   aimed = LookAngles(theta, eyes, target, 70.0);
+	const Pose   head = Oriented(Vec3{}, aimed->pitchDeg, aimed->yawDeg);
+	const Vec3   forward{ -head[2], -head[6], -head[10] };
+	const Vec3   offset = TrackingDelta(theta, dvb::ReachLogic::Sub(target, eyes), 70.0);
+	const double length = std::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+	CHECK(NearVec(forward, dvb::ReachLogic::Scale(offset, 1.0 / length), 1e-9));
 }

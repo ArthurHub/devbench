@@ -31,7 +31,7 @@ Driving the Controllers until their in-game nodes (Wands on Fallout 4 VR) reach 
 _Avoid_: move hand
 
 **Pose**:
-Placing and holding the Tracked set without calibrating: the head at one eye position and pitched, each Controller put where its Wand lands on a node or world point, mapped through the HMD node and a turn fitted from the held Wands.
+Placing and holding the Tracked set without calibrating: the head at one eye position and turned (pitch and yaw, never moved), each Controller put where its Wand lands on a node or world point, mapped through the HMD node and a turn fitted from the held Wands.
 _Avoid_: reach (which calibrates), stance
 
 **Ready pose**:

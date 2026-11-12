@@ -57,6 +57,17 @@ namespace dvb::PoseLogic
 			return true;
 		}
 
+		/// Reads a node's skeleton: "player" (body) or "firstPerson".
+		bool ReadRoot(const json& a_value, const std::string& a_path, std::string& a_out, std::string& a_error)
+		{
+			if (!a_value.is_string() || (a_value.get<std::string>() != "player" && a_value.get<std::string>() != "firstPerson")) {
+				a_error = std::format("'{}' must be \"player\" or \"firstPerson\"", a_path);
+				return false;
+			}
+			a_out = a_value.get<std::string>();
+			return true;
+		}
+
 		bool ReadHand(const json& a_value, const std::string& a_path, HandPlacement& a_out, std::string& a_error)
 		{
 			if (a_value.is_string()) {
@@ -95,18 +106,110 @@ namespace dvb::PoseLogic
 			}
 			a_out.kind = HandPlacement::Kind::kNode;
 			a_out.node = a_value["node"].get<std::string>();
-			if (a_value.contains("root")) {
-				const json& root = a_value["root"];
-				if (!root.is_string() || (root.get<std::string>() != "player" && root.get<std::string>() != "firstPerson")) {
-					a_error = std::format("'{}.root' must be \"player\" or \"firstPerson\"", a_path);
-					return false;
-				}
-				a_out.root = root.get<std::string>();
-			}
+			if (a_value.contains("root") && !ReadRoot(a_value["root"], a_path + ".root", a_out.root, a_error))
+				return false;
 			if (a_value.contains("front") && !ReadNumber(a_value["front"], a_path + ".front", ReachLogic::kFrontMin, ReachLogic::kFrontMax, a_out.front, a_error))
 				return false;
 			if (a_value.contains("offset") && !ReadVec3(a_value["offset"], a_path + ".offset", ReachLogic::kOffsetLimit, a_out.offset, a_error))
 				return false;
+			return true;
+		}
+
+		/**
+		 * Reads head.lookAt: "left", "right", "hands", a node name, or a world point [x,y,z].
+		 */
+		bool ReadLook(const json& a_value, HeadLook& a_out, std::string& a_error)
+		{
+			if (a_value.is_array()) {
+				a_out.kind = HeadLook::Kind::kWorld;
+				return ReadVec3(a_value, "head.lookAt", kWorldLimit, a_out.world, a_error);
+			}
+			if (!a_value.is_string() || a_value.get<std::string>().empty() || a_value.get<std::string>().size() > ReachLogic::kNodeMaxLen) {
+				a_error = std::format("'head.lookAt' must be \"left\", \"right\", \"hands\", a node name of at most {} characters, or [x,y,z]", ReachLogic::kNodeMaxLen);
+				return false;
+			}
+			const std::string target = a_value.get<std::string>();
+			if (target == "left")
+				a_out.kind = HeadLook::Kind::kLeft;
+			else if (target == "right")
+				a_out.kind = HeadLook::Kind::kRight;
+			else if (target == "hands")
+				a_out.kind = HeadLook::Kind::kHands;
+			else {
+				a_out.kind = HeadLook::Kind::kNode;
+				a_out.node = target;
+			}
+			return true;
+		}
+
+		/**
+		 * Reads 'head': the preset "ready" or "down", or {pitch?, yaw?, lookAt?, root?, eyeHeight?,
+		 * cameraHeight?}. lookAt computes the angles, so it refuses pitch and yaw beside it.
+		 */
+		bool ReadHead(const json& a_head, PoseRequest& a_request, std::string& a_error)
+		{
+			if (a_head.is_string()) {
+				const std::string preset = a_head.get<std::string>();
+				if (preset != "ready" && preset != "down") {
+					a_error = "'head' must be \"ready\", \"down\" or an object";
+					return false;
+				}
+				a_request.headPitch = preset == "ready" ? kReadyHeadPitchDeg : kDownHeadPitchDeg;
+				a_request.headYaw = 0.0;
+				return true;
+			}
+			if (!a_head.is_object()) {
+				a_error = "'head' must be \"ready\", \"down\" or an object {pitch?, yaw?, lookAt?, root?, eyeHeight?, cameraHeight?}";
+				return false;
+			}
+			for (const auto& [key, value] : a_head.items()) {
+				if (key != "pitch" && key != "yaw" && key != "lookAt" && key != "root" && key != "eyeHeight" && key != "cameraHeight") {
+					a_error = std::format("'head.{}' is not a pose head field (pitch|yaw|lookAt|root|eyeHeight|cameraHeight)", key);
+					return false;
+				}
+			}
+			if (a_head.contains("lookAt") && (a_head.contains("pitch") || a_head.contains("yaw"))) {
+				a_error = "'head.lookAt' computes the pitch and yaw; give it without 'pitch' or 'yaw'";
+				return false;
+			}
+			if (a_head.contains("pitch")) {
+				double pitch = 0.0;
+				if (!ReadNumber(a_head["pitch"], "head.pitch", -kHeadPitchLimitDeg, kHeadPitchLimitDeg, pitch, a_error))
+					return false;
+				a_request.headPitch = pitch;
+			}
+			if (a_head.contains("yaw")) {
+				double yaw = 0.0;
+				if (!ReadNumber(a_head["yaw"], "head.yaw", -kHeadYawLimitDeg, kHeadYawLimitDeg, yaw, a_error))
+					return false;
+				a_request.headYaw = yaw;
+			}
+			if (a_head.contains("lookAt")) {
+				HeadLook look;
+				if (!ReadLook(a_head["lookAt"], look, a_error))
+					return false;
+				a_request.lookAt = look;
+			}
+			if (a_head.contains("root")) {
+				if (!a_request.lookAt || a_request.lookAt->kind != HeadLook::Kind::kNode) {
+					a_error = "'head.root' goes with a node 'head.lookAt'";
+					return false;
+				}
+				if (!ReadRoot(a_head["root"], "head.root", a_request.lookAt->root, a_error))
+					return false;
+			}
+			if (a_head.contains("eyeHeight")) {
+				double eye = 0.0;
+				if (!ReadNumber(a_head["eyeHeight"], "head.eyeHeight", kEyeHeightMin, kEyeHeightMax, eye, a_error))
+					return false;
+				a_request.eyeHeight = eye;
+			}
+			if (a_head.contains("cameraHeight")) {
+				double camera = 0.0;
+				if (!ReadNumber(a_head["cameraHeight"], "head.cameraHeight", 1.0, kCameraHeightMax, camera, a_error))
+					return false;
+				a_request.cameraHeight = camera;
+			}
 			return true;
 		}
 
@@ -118,7 +221,7 @@ namespace dvb::PoseLogic
 		json FrameAt(long a_tMs, int a_packet, const HeldPose& a_pose)
 		{
 			return ReachLogic::MakeFrame(a_tMs, a_packet,
-				Oriented(Vec3{ 0.0, a_pose.eyeHeight, 0.0 }, a_pose.headPitchDeg),
+				Oriented(Vec3{ 0.0, a_pose.eyeHeight, 0.0 }, a_pose.headPitchDeg, a_pose.headYawDeg),
 				Oriented(a_pose.left, a_pose.leftAim.pitchDeg, a_pose.leftAim.yawDeg),
 				Oriented(a_pose.right, a_pose.rightAim.pitchDeg, a_pose.rightAim.yawDeg));
 		}
@@ -138,52 +241,31 @@ namespace dvb::PoseLogic
 		PoseRequest request;
 		if (a_args.contains("hands") && !a_args["hands"].is_null()) {
 			const json& hands = a_args["hands"];
-			if (!hands.is_object()) {
-				a_error = "'hands' must be an object {left?, right?}";
-				return std::nullopt;
-			}
-			for (const auto& [key, value] : hands.items()) {
-				if (key != "left" && key != "right") {
-					a_error = std::format("'hands.{}' is not a hand (left|right)", key);
+			if (hands.is_string()) {
+				if (hands.get<std::string>() != "ready") {
+					a_error = "'hands' must be \"ready\" or an object {left?, right?}";
 					return std::nullopt;
 				}
-				HandPlacement placement;
-				if (!ReadHand(value, "hands." + key, placement, a_error))
-					return std::nullopt;
-				(key == "left" ? request.left : request.right) = placement;
-			}
-		}
-		if (a_args.contains("head") && !a_args["head"].is_null()) {
-			const json& head = a_args["head"];
-			if (!head.is_object()) {
-				a_error = "'head' must be an object {pitch?, eyeHeight?, cameraHeight?}";
+				request.left = HandPlacement{};
+				request.right = HandPlacement{};
+			} else if (!hands.is_object()) {
+				a_error = "'hands' must be \"ready\" or an object {left?, right?}";
 				return std::nullopt;
-			}
-			for (const auto& [key, value] : head.items()) {
-				if (key != "pitch" && key != "eyeHeight" && key != "cameraHeight") {
-					a_error = std::format("'head.{}' is not a pose head field (pitch|eyeHeight|cameraHeight)", key);
-					return std::nullopt;
+			} else {
+				for (const auto& [key, value] : hands.items()) {
+					if (key != "left" && key != "right") {
+						a_error = std::format("'hands.{}' is not a hand (left|right)", key);
+						return std::nullopt;
+					}
+					HandPlacement placement;
+					if (!ReadHand(value, "hands." + key, placement, a_error))
+						return std::nullopt;
+					(key == "left" ? request.left : request.right) = placement;
 				}
 			}
-			if (head.contains("pitch")) {
-				double pitch = 0.0;
-				if (!ReadNumber(head["pitch"], "head.pitch", -kHeadPitchLimitDeg, kHeadPitchLimitDeg, pitch, a_error))
-					return std::nullopt;
-				request.headPitch = pitch;
-			}
-			if (head.contains("eyeHeight")) {
-				double eye = 0.0;
-				if (!ReadNumber(head["eyeHeight"], "head.eyeHeight", kEyeHeightMin, kEyeHeightMax, eye, a_error))
-					return std::nullopt;
-				request.eyeHeight = eye;
-			}
-			if (head.contains("cameraHeight")) {
-				double camera = 0.0;
-				if (!ReadNumber(head["cameraHeight"], "head.cameraHeight", 1.0, kCameraHeightMax, camera, a_error))
-					return std::nullopt;
-				request.cameraHeight = camera;
-			}
 		}
+		if (a_args.contains("head") && !a_args["head"].is_null() && !ReadHead(a_args["head"], request, a_error))
+			return std::nullopt;
 		if (a_args.contains("moveMs") && !ReadInteger(a_args["moveMs"], "moveMs", 0, kMoveMsMax, request.moveMs, a_error))
 			return std::nullopt;
 		if (a_args.contains("holdMs") && !ReadInteger(a_args["holdMs"], "holdMs", ReachLogic::kHoldMsMin, ReachLogic::kHoldMsMax, request.holdMs, a_error))
@@ -271,6 +353,27 @@ namespace dvb::PoseLogic
 		return ReachLogic::Add(a_hmdWorld, Vec3{ c * g.x - s * g.y, s * g.x + c * g.y, g.z });
 	}
 
+	/**
+	 * Maps the eyes-to-target offset into tracking space, then reads the angles off Oriented's
+	 * forward, (-sin(yaw) cos(pitch), sin(pitch), -cos(yaw) cos(pitch)).
+	 */
+	std::optional<HeadAngles> LookAngles(double a_theta, const Vec3& a_eyesWorld, const Vec3& a_target, double a_unitsPerMeter)
+	{
+		const Vec3 offset = ReachLogic::Sub(a_target, a_eyesWorld);
+		if (ReachLogic::Distance(a_target, a_eyesWorld) < kLookAtMinUnits || !(a_unitsPerMeter > kEpsilon))
+			return std::nullopt;
+		const Vec3   d = TrackingDelta(a_theta, offset, a_unitsPerMeter);
+		const double horizontal = std::sqrt(d.x * d.x + d.z * d.z);
+		HeadAngles   angles;
+		angles.pitchDeg = std::atan2(d.y, horizontal) * 180.0 / kPi;
+		angles.yawDeg = horizontal > kEpsilon ? std::atan2(-d.x, -d.z) * 180.0 / kPi : 0.0;
+		if (std::abs(angles.pitchDeg) > kHeadPitchLimitDeg) {
+			angles.pitchDeg = std::clamp(angles.pitchDeg, -kHeadPitchLimitDeg, kHeadPitchLimitDeg);
+			angles.clamped = true;
+		}
+		return angles;
+	}
+
 	json MoveFrames(const HeldPose& a_from, const HeldPose& a_to, long a_moveMs, long a_holdMs)
 	{
 		json frames = json::array();
@@ -282,6 +385,7 @@ namespace dvb::PoseLogic
 				const double t = EaseInOut(static_cast<double>(k) / static_cast<double>(steps));
 				HeldPose     pose = a_to;
 				pose.headPitchDeg = a_from.headPitchDeg + (a_to.headPitchDeg - a_from.headPitchDeg) * t;
+				pose.headYawDeg = a_from.headYawDeg + (a_to.headYawDeg - a_from.headYawDeg) * t;
 				pose.left = Lerp(a_from.left, a_to.left, t);
 				pose.right = Lerp(a_from.right, a_to.right, t);
 				pose.leftAim = LerpAim(a_from.leftAim, a_to.leftAim, t);

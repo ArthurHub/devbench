@@ -413,22 +413,27 @@ them, so placing a hand is one calculation, a short move and a check.
 ```powershell
 # take over in the ready pose, then put the left hand at a world point with the head looking down
 irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t"}'
-irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","head":{"pitch":-60},"hands":{"left":{"world":[-1765,-1372,75]}}}'
-irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","hands":{"left":"ready"},"head":{"pitch":-22}}'
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","head":"down","hands":{"left":{"world":[-1765,-1372,75]}}}'
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","hands":"ready","head":"ready"}'
+# look at the left hand while it goes to the chest
+irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner":"t","head":{"lookAt":"left"},"hands":{"left":{"node":"Chest","root":"player","front":10}}}'
 ```
 
 - **Synchronous.** It answers once the hands are placed (about 0.5–1 s), with `controlToken`
-  (for `stop`), `eyeHeight`, `headPitch`, `turnDeg` (when a node or world target fitted it), `corrections` and per hand `tracking`,
+  (for `stop`), `fresh`, `eyeHeight`, `headPitch`, `headYaw`, `lookAt` (`target`, `clamped`),
+  `turnDeg` (when a node or world target fitted it), `corrections` and per hand `tracking`,
   `wand`, `target` and `error`. `press` works over the hold, as for a sequence.
 - **Held across calls.** A later `pose` by the same owner moves from the held one, replacing
   its sequence in place (`fresh: false`). An absent hand or head stays where it is. The hold
-  is its own sequence, under its own token: once it runs out, stops, ends at a load or is
-  replaced by another `sequence` (even the same owner's), the next `pose` starts fresh, and
-  while another sequence holds the devices `pose` answers 409.
+  lasts `holdMs` (default 60 s) after each call, so a caller that dies frees the controllers
+  within a minute. It is its own sequence, under its own token: once it runs out, stops, ends
+  at a load or is replaced by another `sequence` (even the same owner's), the next `pose`
+  starts fresh, and while another sequence holds the devices `pose` answers 409.
 - **Ready pose.** A fresh hold starts with the head pitched −22° and the hands 0.6 m in front,
   0.4 m below the eyes, 0.19 m to each side, swung 10° left so the desktop mirror (the left eye)
-  shows them, the controllers pointing 10° up. It was picked in the headset; −60° is the
-  pitch that shows the belt.
+  shows them, the controllers pointing 10° up. It was picked in the headset. `hands: "ready"`
+  puts both hands back; `head: "ready"` puts the head back (−22°, yaw 0), and `head: "down"`
+  looks at the body (−60°, yaw 0, low enough to show the belt).
 - **Eye height.** A body mod lifts the room node above the player's feet (FRIK's seated
   `fPlayerHMDOffsetUpSitting`, 37.4 units here), and an injected head at a fixed standing
   height stacks on that lift: under seated FRIK, reach's 1.65 m stretches the body. `pose`
@@ -440,10 +445,24 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner
   controller whatever the aim, but the body's hand hangs about 6 units behind it along the
   controller: a hand raised to the head is placed tilted back (pitch 123, yaw 14 for the
   left, as recorded in the headset), so it hangs beside the head instead of in the face.
-- **The head only pitches**, around the eye point, so the HMD node does not move between
-  placements. A body mod leans the body with the pitch, so `pose` pitches the head first and
-  reads node targets in the pitched pose; a correction then removes what the body moved
-  with the arm.
+- **The head only turns**, around the eye point, so the HMD node does not move between
+  placements: `head.pitch` (negative looks down) and `head.yaw` (positive turns left), in
+  tracking degrees, the yaw relative to the ready forward. There is no head position. A body
+  mod leans and turns the body with the head, so `pose` turns the head first and reads node
+  targets in the turned pose; a correction then removes what the body moved with the arm.
+- **Looking at something.** `head.lookAt` is `"left"`, `"right"`, `"hands"` (their midpoint),
+  a node (with `head.root`) or a world point `[x,y,z]`, and computes the pitch and yaw, so it
+  refuses `pitch` / `yaw` beside it. The point is read before anything moves: a hand this
+  call places is aimed at its target, one it leaves at its wand. A body mod turns the body
+  with the head, and a hand on a node moves with it, so for a hand target `pose` aims again
+  at where the wands landed (`lookAt.reaimed`) when the first aim is off by more than 0.5°.
+  The hold keeps the angles, not the target, so a later call that moves the hands does not
+  turn the head. A target straight above or below clamps the pitch to ±85°
+  (`lookAt.clamped`); one at the eyes answers 400.
+- **Pitch limit ±85°**, explicit or from `lookAt`. Chosen in the headset: closer to vertical
+  the view and FRIK's neck look wrong. It is not for stability: a held head at −89° and at
+  −85° kept the HMD node's and the body's heading still to 0.0° over 10 s, since an injected
+  pose has none of a real headset's jitter.
 - **Skyrim**: not measured; `pose` answers 501 there.
 
 Checked live on FO4VR 1.2.72 (2026-11-11, FRIK seated, F4VR Common Framework) through a
@@ -468,6 +487,24 @@ Then through `pose` itself, the same day and setup:
   needed;
 - Immersive Flashlight's controller tests ran on `pose` alone: all six passed, each zone in one
   placement, landing as with the prototype.
+
+Head presets, yaw and `lookAt`, the same day in QASmoke (FRIK seated), measured against the
+HMD node's forward row:
+
+- `head: "down"` and `{hands: "ready", head: "ready"}` answered in about 1 s each;
+- the left hand to `Chest` at head yaw 0, +45 and −45: the fitted turn stayed 135.18° at all
+  three (turning the head does not turn the map), and the wand landed on the turned body's
+  `Chest` with no correction;
+- `lookAt` the hands, a world point ahead and `Pelvis`: 0.0–0.6° off; a point straight below
+  clamped to the limit, then −89° (0.57–1.15° off; the limit is now 85°); the three refusals (at the eyes, beside `pitch`, `root` without a node)
+  answered 400;
+- `lookAt` a hand placed on `Chest` or `Pelvis`: the first aim missed by up to 16.75° (the
+  head turn moved the body, and the hand with it); aiming again at the landed wand brought
+  it to 0.0° (0.57° where the pitch clamps), each call 1.4 s, the wands 0.004–0.007 units
+  from their targets. To look at its own chest the head turns to a large yaw (−150° to
+  −170°) at a steep pitch: the seated body's chest sits just behind the eye point;
+- a `pose`, then `stop` with its token: the game kept running (an earlier hang after a stop
+  did not reproduce).
 
 Checked live on FO4VR 1.2.72 (2026-11-10, FRIK, F4VR Common Framework and FO4VRTools
 installed):
