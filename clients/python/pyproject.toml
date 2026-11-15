@@ -1,5 +1,33 @@
-# Ruff settings for the devbench Python client. pre-commit runs ruff on clients/python/ only.
+# The devbench Python client: distribution devbench-client, import package devbench. The version comes from the
+# repo's git tag (setuptools-scm), so the package and the DLL share a number.
 
+[build-system]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devbench-client"
+dynamic = ["version"]
+description = "Python client for devbench's REST port, and a pytest plugin for in-game end-to-end tests."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+# The client never imports pytest; the opt-in plugin (devbench.testing) does.
+dependencies = ["pytest"]
+
+[tool.setuptools.package-data]
+devbench = ["py.typed"]
+
+[tool.setuptools_scm]
+root = "../.."
+# A checkout without tags (a shallow clone, a source zip) still installs.
+fallback_version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# pre-commit runs ruff on clients/python/ only.
 [tool.ruff]
 line-length = 120
 # Lowest Python the package supports; keep in step with requires-python.

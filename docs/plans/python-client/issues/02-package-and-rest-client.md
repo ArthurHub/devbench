@@ -1,6 +1,6 @@
 # 02 Package skeleton and REST client
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 
 Spec: [../spec.md](../spec.md). Source to extract: `F4VR-ImmersiveFlashlight/tests/e2e/devbench.py`, with
