@@ -22,7 +22,9 @@ nothing on `--collect-only`, `--e2e-restore` or a run without results.
   at `maxDimension` 2048, read through `files` (root `data`), the game's copy deleted, saved as
   `pictures/NNN-<test>.png` (written with `zlib`, no Pillow; about 1.3 MB); in VR cropped to the left eye (the target
   holds both side by side), 1024x1088 on FO4VR.
-  The first picture that fails says why in its row and in one note, and pictures stay off for the run.
+  The first picture that fails says why in its row and in one note, and pictures stay off for the run. A setup
+  failure with the crash (file, line, message) of one already captured takes nothing: a failed session fixture
+  fails every later test's setup with the same error, and only its first test gets the picture and log tail.
 - **Section API** on the `report` fixture: `section(title, *, intro, columns, rows, html)`. The same title appends; a
   section is a table (escaped cells) or raw HTML; other columns, a row of another length or the other shape raise
   `ValueError`; the first intro given stays. Sections render after the areas, in first-added order.

@@ -52,6 +52,9 @@ class _Run:
     test_mark: tuple[str, LogMark] | None = None
     # set by the first failure picture that could not be taken: no later failure tries again
     pictures_off: bool = field(default=False)
+    # the crashes of the setup failures captured so far: a session fixture's error fails every later test's setup
+    # again, and only its first test takes the picture and log tail
+    setup_crashes: set[tuple[str, int, str]] = field(default_factory=set)
 
     def backup(self, bench: Devbench) -> Backup | None:
         """The backup of Config.backup in <home>/.backup, or None when the config backs nothing up."""
@@ -73,13 +76,26 @@ class _Run:
     ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
         """
         On the first failed phase of a test that uses the game fixture, while the game is up: take its failure
-        picture and log tail, before its teardown changes what the game shows.
+        picture and log tail, before its teardown changes what the game shows. A setup failure with the crash of one
+        already captured (a failed session fixture, raised again for each test) takes nothing.
         """
         report = yield
         failures = self.record.failures
         if report.failed and self.game is not None and "game" in item.fixturenames and item.nodeid not in failures:
-            failures[item.nodeid] = self._capture(self.game, item.nodeid)
+            if not self._repeated_setup_crash(report):
+                failures[item.nodeid] = self._capture(self.game, item.nodeid)
         return report
+
+    def _repeated_setup_crash(self, report: pytest.TestReport) -> bool:
+        """Whether a failed report is a setup failure whose crash (file, line, message) an earlier setup failure had."""
+        crash = getattr(report.longrepr, "reprcrash", None)
+        if report.when != "setup" or crash is None:
+            return False
+        key = (str(crash.path), crash.lineno, crash.message)
+        if key in self.setup_crashes:
+            return True
+        self.setup_crashes.add(key)
+        return False
 
     def _capture(self, game: Devbench, nodeid: str) -> Failure:
         """

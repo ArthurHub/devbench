@@ -372,6 +372,26 @@ def test_the_first_failed_picture_turns_pictures_off(pytester, fake, game):
     assert sum(path == "/api/tool/rendertarget" for _, path, _ in fake.calls) == 1
 
 
+def test_a_failed_session_fixture_is_captured_once(pytester, fake, game):
+    pytester.makeconftest(
+        CONFTEST.replace("{AREAS}", "{}")
+        + """
+import pytest
+
+@pytest.fixture(scope="session")
+def game(game):
+    raise AssertionError("the mod's setup failed")
+"""
+    )
+    pytester.makepyfile(test_a="def test_one(game): pass\ndef test_two(game): pass\ndef test_three(game): pass")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(failed=3)
+    assert list(_record(reprec).failures) == ["test_a.py::test_one"]
+    assert game.dumps == [94]
+
+
 def test_a_test_without_the_game_takes_no_picture(pytester, fake, game):
     _conftest(pytester)
     pytester.makepyfile(test_a="def test_one(): assert False")
