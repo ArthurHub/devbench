@@ -429,7 +429,7 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner
   0.4 m below the eyes, 0.19 m to each side, swung 10° left so the desktop mirror (the left eye)
   shows them, the controllers pointing 10° up. It was picked in the headset. `hands: "ready"`
   puts both hands back; `head: "ready"` puts the head back (−22°, yaw 0), and `head: "down"`
-  looks at the body (−60°, yaw 0, low enough to show the belt).
+  looks at the body (−75°, yaw 0, low enough to show the belt).
 - **Eye height.** A body mod lifts the room node above the player's feet (FRIK's seated
   `fPlayerHMDOffsetUpSitting`, 37.4 units here), and an injected head at a fixed standing
   height stacks on that lift: under seated FRIK, the fixed 1.65 m `reach` used stretches the body. `pose`
