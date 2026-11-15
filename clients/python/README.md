@@ -115,6 +115,28 @@ string or compiled pattern, found with `re.search`. A log shorter than the mark 
 it counts as new. The log tool returns at most the last 5000 lines, so more than that returns the last 5000 and
 `mark.missed` says how many were not read.
 
+Drive the VR hands (Fallout 4 VR) through devbench's `input` pose: it holds the HMD and both controllers, places a
+hand's wand at a world point and presses buttons on top, and the game sees real devices:
+
+```python
+from devbench import Hands
+
+hands = Hands(bench, "mymod-e2e")  # the owner of the hold; hold_ms= for a hold longer than devbench's 60 s
+if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
+    with hands:  # starts in the ready pose; always stops, handing the devices back
+        answer = hands.place("left", [x, y, z], pitch=10, yaw=10)  # devbench's answer: corrections, hands
+        hands.head("down")  # "ready", "down" or {pitch?, yaw?, lookAt?, ...}
+        hands.tap("left")  # press("left", ["trigger"], 100); returns once released
+        hands.long_press("right", ["grip"])  # 1000 ms
+        hands.rest()  # hands and head back in the ready pose
+        hands.pose(hands={"right": {"node": "LArm_Hand", "front": 10}})  # any other pose arguments
+```
+
+Hands are physical (`left` / `right`); a mod maps its own primary / offhand. `pitch` and `yaw` pass through as the
+`input` tool takes them. `TAP_MS` (100) and `LONG_PRESS_MS` (1000) are F4VR-CommonFramework's gesture thresholds.
+A press without a hold of this owner (it never started, or the hold ran out) raises `DevbenchError` (409). `stop`
+ignores a refused stop, and on an exception inside the `with` it never hides that exception.
+
 Put Fallout 4 (or VR) in a test cell, so nothing a run does reaches a save:
 
 ```python

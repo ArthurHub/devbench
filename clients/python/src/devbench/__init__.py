@@ -12,6 +12,7 @@ from devbench.events import Events
 from devbench.files import Backup, delete_file, list_files, read_bytes, read_text, write_bytes, write_text
 from devbench.log import LogMark
 from devbench.menus import close_dialogs, close_menus, open_menus
+from devbench.vr import Hands
 from devbench.waits import wait_until
 
 try:
@@ -24,6 +25,7 @@ __all__ = [
     "Devbench",
     "DevbenchError",
     "Events",
+    "Hands",
     "LogMark",
     "ModTool",
     "RequirementError",
