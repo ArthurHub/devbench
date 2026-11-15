@@ -76,7 +76,37 @@ namespace dvb::vrhost
 
 	std::vector<std::string> PlatformActions()
 	{
-		return { "pose" };
+		return { "pose", "handedness" };
+	}
+
+	/**
+	 * bLeftHandedMode:VR, read live from the setting object; nullopt without it (flat Fallout 4).
+	 */
+	std::optional<bool> LeftHanded()
+	{
+		auto* setting = LeftHandedSetting();
+		return setting ? std::optional<bool>(setting->GetBinary()) : std::nullopt;
+	}
+
+	/**
+	 * Sets bLeftHandedMode:VR through the console's setini, which the game follows within a few
+	 * frames. Writing the setting object alone changes the value but the wands never swap (both
+	 * verified live on FO4VR): setini does more than the write.
+	 */
+	void SetLeftHanded(bool a_leftHanded)
+	{
+		if (!LeftHandedSetting())
+			throw ToolError(501, "bLeftHandedMode:VR is not on this runtime");
+		const json result = RunConsoleCapture(std::format("setini \"bLeftHandedMode:VR\" {}", a_leftHanded ? 1 : 0), 20);
+		if (!result.value("compiled", false))
+			throw ToolError(500, std::format("setini bLeftHandedMode:VR did not compile: {}", result.value("lines", json::array()).dump()));
+	}
+
+	HandednessLogic::WandSlots WandSlotsWorld()
+	{
+		const auto& primary = WandSlotNode(true)->world.translate;
+		const auto& secondary = WandSlotNode(false)->world.translate;
+		return HandednessLogic::WandSlots{ { primary.x, primary.y, primary.z }, { secondary.x, secondary.y, secondary.z } };
 	}
 
 	/**

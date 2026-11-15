@@ -15,6 +15,13 @@ _Avoid_: controller (for the body part)
 **Wand**:
 The in-game node the game places at a Controller's pose each frame, present with or without a body mod.
 
+**Handedness**:
+Which Controller is the player's primary one: the right unless the game is set left-handed. Changing it swaps which Controller each of the game's two Wands follows.
+
+**Primary / offhand**:
+A Controller named by its role for the Handedness instead of physically (left / right), resolved when a request arrives.
+_Avoid_: main hand, primaryHand
+
 **Tracked set**:
 The HMD and both Controllers taken together, the unit devbench replaces as a whole.
 _Avoid_: devices, rig

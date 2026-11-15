@@ -381,6 +381,12 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"press","owne
   the hands land from the wand nodes (`primaryWandNode` / `secondaryWandNode`, mapped to
   physical left/right through `bLeftHandedMode:VR`, read live), so it works with or without
   FRIK.
+- **Logical hands.** `press.hand`, the `pose` `hands` keys and `head.lookAt` take `primary` /
+  `offhand` beside `left` / `right`, resolved live from `bLeftHandedMode:VR` (the primary hand
+  is the right controller unless left-handed). Answers stay keyed `left` / `right` and carry
+  `leftHanded`; two names for one controller (`left` and `primary` while left-handed) answer 400. Skyrim answers 501 for them.
+- **`handedness`** reads the game's handedness, or sets it and confirms the game followed: see
+  below. `capabilities.vrTrackedSet.leftHanded` reports it live.
 - **`reach`** is Skyrim's: it calibrates (about 16 s per hand) because Skyrim measures the
   hand bones. On Fallout the Wands sit straight at the controllers, so `pose` needs no
   calibration, and `reach`, `reachStatus` and `reachStop` answer 400 here.
@@ -526,6 +532,44 @@ installed). The `reach` runs are history: they are what showed the map is simple
   the head, a long press back to the hand. The Common Framework's input handling saw the
   injected buttons as real ones. (Under the mod's Immersive headgear restriction that
   gesture needs headgear; the run set `iFlashlightHeadgearRequirement` to 0 for the session.)
+
+### `handedness`: setting it and seeing the game follow
+
+```powershell
+irm $i -Method Post -ContentType application/json -Body '{"action":"handedness"}'                     # { leftHanded }
+irm $i -Method Post -ContentType application/json -Body '{"action":"handedness","leftHanded":true}'   # { leftHanded, was, changed, elapsedMs }
+```
+
+- **Set through `setini`.** The set runs the console's `setini "bLeftHandedMode:VR"` on the
+  main thread. Writing the setting object alone changes the value (`getini` shows it) but the
+  wands never swap; `setini` does more than the write. The game swaps `primaryWandNode` and
+  `secondaryWandNode` between the controllers a few frames later.
+- **The check.** A set waits until each wand slot sits where the other one was (within 2
+  units, up to 2 s). That only shows with the controllers held still and apart, so it runs
+  under the caller's own `pose` hold (same `owner`), or under a short ready-pose hold of its
+  own (`devbench:handedness`) that it hands back when nothing holds the devices. Another
+  owner's sequence, or a frame `sequence`, answers 409; so do held wands under 10 units apart
+  (after waiting up to 1 s for a fresh hold to land). With the headset idle the physical
+  controllers are untracked and both wands sit at the room origin, which is why it never
+  checks against them.
+- **A set that does not take** puts the old value back and answers 504 with the setting it
+  read and where each wand was against where it should be. Setting the value it already has
+  answers at once, `changed: false`.
+- **Skyrim** answers 501.
+
+Checked live on FO4VR 1.2.72 (2026-11-15, QASmoke, FRIK, F4VR Common Framework):
+
+- a console `setini` under a ready-pose hold swapped the wands within 0.25 s, both ways; a
+  write of the setting object alone left them unswapped for 2 s (the set answered 504 and put
+  the value back);
+- a set with no hold took its own and handed it back (no sequence active after), in about
+  0.2 s; a set under the caller's `pose` hold, 54 ms, the hold still running after; a set to
+  the value it has answered `changed: false` at once; another owner's set during a hold
+  answered 409;
+- left-handed: `capabilities` and the `pose` / `press` answers carried `leftHanded: true`, a
+  `press` on `offhand` landed on the right controller, `pose` with `primary` at a world point
+  placed the left wand 0.01 units off, and `left` + `primary` answered 400; right-handed
+  again, `offhand` pressed the left controller.
 
 ## `player`, the short version
 
@@ -704,6 +748,10 @@ is on a worker thread in game, so devbench offers its queue through the C-ABI. S
     single sample of the real controller as a sequence begins and ends. Moves chained by
     replacing in place (as `reach` did and `pose` does) keep only the first start and the
     last stop; the cause is not investigated.
+  - **A slow first `handedness` set.** The first set after launching the game and entering
+    QASmoke answered after more than 30 s (it took effect and handed its hold back); every
+    later one, also right after a `coc` reload, took about 0.2 s. Not reproduced or
+    explained.
   - **Flat Fallout 4** registers `input` too; `capabilities` answers `available: false` and
     the actions 503 (no OpenVR). Never run.
 - **`record` / `replay` / `scenario` / `capture` / `game` / `papyrus`** are Skyrim-only

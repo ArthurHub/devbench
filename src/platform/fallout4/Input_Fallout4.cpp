@@ -50,6 +50,14 @@ namespace dvb
 			"physical controllers in between (same controller indices required). 'releaseAll' stops this "
 			"owner's sequence. The real devices pass through whenever no sequence is active, and a sequence stops on "
 			"load and new game. Emits input.vrTrackedSet events. "
+			"Hands are named physically (left / right) or logically (primary / offhand, resolved live from the game's "
+			"handedness) in press.hand, the pose hands keys and head.lookAt; answers stay keyed left / right and carry "
+			"leftHanded, and two names for one controller answer 400. "
+			"action='handedness' answers { leftHanded } (bLeftHandedMode:VR); with leftHanded it sets it and waits until the "
+			"wands swap controllers, answering { leftHanded, was, changed, elapsedMs }. The swap only shows with the "
+			"controllers held still and apart, so the check runs under this owner's pose hold, or a short ready-pose hold "
+			"of its own when nothing holds the devices; another sequence answers 409, as do held hands under 10 units "
+			"apart. A set that does not take within 2 s puts the old value back and answers 504 with the wand positions. "
 			"action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller "
 			"for durationMs on top of the active sequence or pose hold, as its owner (409 otherwise); trigger and grip also "
 			"drive their analog axis to 1.0, and the controller packet number moves on at press start and end. It ends with "
@@ -81,18 +89,19 @@ namespace dvb
 		input.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "press", "pose" }) } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "observe", "sequence", "stop", "releaseAll", "press", "pose", "handedness" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "vrTrackedSet" }) }, { "description", "the only device on Fallout 4 (default)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
 								{ "frames", json{ { "type", "array" }, { "minItems", 1 }, { "maxItems", kMaximumVRTrackedFrames }, { "description", "sequence: monotonic atomic frames; each requires tMs, originCode, hmd, left, right; controller objects carry packetNumber/pressed/touched/five axes" }, { "items", json{ { "type", "object" } } } } },
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "sequence: final-state visibility before automatic release (default 50ms)" } } },
 								{ "controlToken", json{ { "type", "string" }, { "description", "stop/releaseAll: opaque token returned by sequence start. sequence: the running sequence's token replaces its frames in place" } } },
-								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
+								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right", "primary", "offhand" }) }, { "description", "press: the controller, physical (left / right) or logical (primary / offhand, for the game's handedness)" } } },
+								{ "leftHanded", json{ { "type", "boolean" }, { "description", "handedness: set the game's handedness (true: the left controller is the primary hand); absent reads it" } } },
 								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
 								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
 								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "press: how long the buttons stay down (default 100)" } } },
-								{ "hands", json{ { "oneOf", json::array({ json{ { "type", "string" }, { "enum", json::array({ "ready" }) } }, json{ { "type", "object" } } }) }, { "description", "pose: 'ready' for both hands, or {left?, right?} each 'ready', {node, root?, front?, offset?:[x,y,z]} (that controller's wand at a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in) or {world:[x,y,z]}; a node or world hand takes pitch / yaw (degrees, -180..180) for how the controller points; an absent hand stays where it is held" } } },
-								{ "head", json{ { "oneOf", json::array({ json{ { "type", "string" }, { "enum", json::array({ "ready", "down" }) } }, json{ { "type", "object" } } }) }, { "description", "pose: 'ready' (pitch -22, yaw 0), 'down' (pitch -75, yaw 0) or {pitch?, yaw?, lookAt?, root?, eyeHeight?, cameraHeight?} - pitch in degrees (-85..85, negative looks down) and yaw (-180..180, positive turns left), absent keeps the held head; lookAt 'left' | 'right' | 'hands' | <node> | [x,y,z] computes both instead (pitch clamped to 85), root 'player' or 'firstPerson' for a node; eyeHeight (0.3..2.5) the injected eye height in tracking meters, instead of the one cameraHeight gives; cameraHeight (1..1000) world units above the player's feet the camera should sit at (default 115, a natural FRIK body); either height starts a fresh hold" } } },
+								{ "hands", json{ { "oneOf", json::array({ json{ { "type", "string" }, { "enum", json::array({ "ready" }) } }, json{ { "type", "object" } } }) }, { "description", "pose: 'ready' for both hands, or {left?, right?} (or primary? / offhand?) each 'ready', {node, root?, front?, offset?:[x,y,z]} (that controller's wand at a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in) or {world:[x,y,z]}; a node or world hand takes pitch / yaw (degrees, -180..180) for how the controller points; an absent hand stays where it is held" } } },
+								{ "head", json{ { "oneOf", json::array({ json{ { "type", "string" }, { "enum", json::array({ "ready", "down" }) } }, json{ { "type", "object" } } }) }, { "description", "pose: 'ready' (pitch -22, yaw 0), 'down' (pitch -75, yaw 0) or {pitch?, yaw?, lookAt?, root?, eyeHeight?, cameraHeight?} - pitch in degrees (-85..85, negative looks down) and yaw (-180..180, positive turns left), absent keeps the held head; lookAt 'left' | 'right' | 'primary' | 'offhand' | 'hands' | <node> | [x,y,z] computes both instead (pitch clamped to 85), root 'player' or 'firstPerson' for a node; eyeHeight (0.3..2.5) the injected eye height in tracking meters, instead of the one cameraHeight gives; cameraHeight (1..1000) world units above the player's feet the camera should sit at (default 115, a natural FRIK body); either height starts a fresh hold" } } },
 								{ "moveMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 5000 }, { "description", "pose: how long a move takes, so it is seen (default 300)" } } },
 								{ "corrections", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 5 }, { "description", "pose: correction moves while a wand misses its node or world target (default 2)" } } },
 								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "pose: how long to hold after the move (default 60000)" } } },

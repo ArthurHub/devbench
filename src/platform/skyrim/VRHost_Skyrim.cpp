@@ -113,4 +113,23 @@ namespace dvb::vrhost
 	{
 		throw ToolError(501, "pose is not available on Skyrim VR yet; use reach");
 	}
+
+	/**
+	 * Not reported on Skyrim VR yet: the handedness action and the primary / offhand hand
+	 * names answer 501 there.
+	 */
+	std::optional<bool> LeftHanded()
+	{
+		return std::nullopt;
+	}
+
+	void SetLeftHanded(bool)
+	{
+		throw ToolError(501, "handedness is not available on Skyrim VR yet");
+	}
+
+	HandednessLogic::WandSlots WandSlotsWorld()
+	{
+		throw ToolError(501, "handedness is not available on Skyrim VR yet");
+	}
 }

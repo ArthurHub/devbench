@@ -6,6 +6,7 @@
 #include "core/tools/Memory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <utility>
 
@@ -744,13 +745,41 @@ namespace dvb
 	}
 
 	/**
+	 * The bLeftHandedMode:VR setting object, looked up once: the setting collections are built
+	 * at startup and not changed after, so the cached pointer stays valid and the lookup is
+	 * safe off the main thread. Null on a runtime without it (flat Fallout 4).
+	 */
+	RE::Setting* LeftHandedSetting()
+	{
+		static std::atomic<RE::Setting*> cached{ nullptr };
+		if (auto* setting = cached.load(std::memory_order_acquire))
+			return setting;
+		auto* setting = RE::GetINISetting("bLeftHandedMode:VR");
+		if (setting)
+			cached.store(setting, std::memory_order_release);
+		return setting;
+	}
+
+	/**
 	 * The game's left-handed mode (bLeftHandedMode:VR), read live: it swaps which physical
 	 * controller is the primary hand.
 	 */
 	bool LeftHandedMode()
 	{
-		auto* setting = RE::GetINISetting("bLeftHandedMode:VR");
+		auto* setting = LeftHandedSetting();
 		return setting && setting->GetBinary();
+	}
+
+	/**
+	 * The primary or secondary Wand slot's node, whichever controller drives it.
+	 */
+	RE::NiAVObject* WandSlotNode(bool a_primary)
+	{
+		const Slot* slot = FindVRSlot(a_primary ? "primaryWandNode" : "secondaryWandNode");
+		auto*       node = slot ? VRSlotRoot(*slot).node : nullptr;
+		if (!node)
+			throw ToolError(503, std::format("the {} wand node is not available", a_primary ? "primary" : "secondary"));
+		return node;
 	}
 
 	/**
@@ -759,10 +788,6 @@ namespace dvb
 	 */
 	RE::NiAVObject* WandNode(bool a_right)
 	{
-		const Slot* slot = FindVRSlot(a_right != LeftHandedMode() ? "primaryWandNode" : "secondaryWandNode");
-		auto*       node = slot ? VRSlotRoot(*slot).node : nullptr;
-		if (!node)
-			throw ToolError(503, std::format("the {} wand node is not available", a_right ? "right" : "left"));
-		return node;
+		return WandSlotNode(a_right != LeftHandedMode());
 	}
 }

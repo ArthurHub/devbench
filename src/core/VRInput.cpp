@@ -1053,7 +1053,7 @@ namespace dvb
 		json actions = json::array({ "status", "observe", "sequence", "stop", "releaseAll", "press" });
 		for (const auto& action : vrhost::PlatformActions())
 			actions.push_back(action);
-		return json{
+		json out{
 			{ "version", json{ { "major", kVRContractVersion },
 							 { "minor", kVRContractMinorVersion } } },
 			{ "available", host::Get().vr },
@@ -1075,6 +1075,30 @@ namespace dvb
 			{ "maximumFrames", kMaximumVRTrackedFrames },
 			{ "maximumDurationMs", kMaximumVRTrackedDurationMs },
 		};
+		if (const auto leftHanded = vrhost::LeftHanded())
+			out["leftHanded"] = *leftHanded;
+		return out;
+	}
+
+	namespace
+	{
+		/**
+		 * The arguments with primary / offhand replaced by the physical controllers for the
+		 * game's handedness, read now; unchanged when they name no logical hand.
+		 */
+		json ResolveLogicalHands(const json& a_args)
+		{
+			if (!HandednessLogic::UsesLogicalHands(a_args))
+				return a_args;
+			const auto leftHanded = vrhost::LeftHanded();
+			if (!leftHanded)
+				throw ToolError(501, "the primary / offhand hand names are not available on this game yet; name the controller (left / right)");
+			std::string error;
+			auto        resolved = HandednessLogic::ResolveHands(a_args, *leftHanded, error);
+			if (!resolved)
+				throw ToolError(400, error);
+			return *resolved;
+		}
 	}
 
 	bool IsVRInputDevice(std::string_view a_device)
@@ -1109,10 +1133,15 @@ namespace dvb
 			const std::string owner = ResolveOwner(a_args, a_ctx);
 			if (action == "sequence")
 				return VRTrackedSetManager::Get().Start(a_args, owner, a_ctx.internal);
-			if (action == "pose")
-				return PoseControl::Place(a_args, owner, a_ctx);
-			if (action == "press")
-				return VRTrackedSetManager::Get().Press(a_args, owner);
+			if (action == "handedness")
+				return PoseControl::Handedness(a_args, owner, a_ctx);
+			if (action == "pose" || action == "press") {
+				const json args = ResolveLogicalHands(a_args);
+				json       result = action == "pose" ? PoseControl::Place(args, owner, a_ctx) : VRTrackedSetManager::Get().Press(args, owner);
+				if (const auto leftHanded = vrhost::LeftHanded(); leftHanded && result.is_object())
+					result["leftHanded"] = *leftHanded;
+				return result;
+			}
 			if (action == "stop" || action == "releaseAll") {
 				if (a_args.contains("controlToken") && !a_args["controlToken"].is_string())
 					throw ToolError(400, "'controlToken' must be a string");
@@ -1121,7 +1150,7 @@ namespace dvb
 					a_ctx.internal,
 					action == "releaseAll" ? "releaseAll" : "request");
 			}
-			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|pose)", action));
+			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|press|pose|handedness)", action));
 		} catch (const json::exception& e) {
 			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}

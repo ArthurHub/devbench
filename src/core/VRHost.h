@@ -1,8 +1,10 @@
 #pragma once
 
+#include "core/HandednessLogic.h"
 #include "core/ReachLogic.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,8 +23,8 @@ namespace vr
 // input returns nullptr from the interface getters, which keeps the input API reporting "not
 // ready" instead of failing to link.
 //
-// Threading: the interface getters and PlatformActions are callable from any thread. Everything else is called on
-// the game's main thread (the core marshals with MainThread::RunAndWait first).
+// Threading: the interface getters, PlatformActions and LeftHanded are callable from any thread. Everything else is
+// called on the game's main thread (the core marshals with MainThread::RunAndWait first).
 namespace dvb::vrhost
 {
 	/// The game's own OpenVR system interface (IVRSystem_019 ABI), or nullptr while unavailable.
@@ -58,4 +60,13 @@ namespace dvb::vrhost
 	PoseStance ReadPoseStance();
 	/// World position of the in-game HMD node, the anchor Pose maps tracking space through.
 	ReachLogic::Vec3 HmdWorld();
+
+	/// The game's handedness: true while the left controller is the primary hand; nullopt on a
+	/// platform that does not report it (the handedness action and logical hand names 501 there).
+	std::optional<bool> LeftHanded();
+	/// Sets the game's handedness. Throws ToolError(501) where LeftHanded is nullopt.
+	void SetLeftHanded(bool a_leftHanded);
+	/// The two wand slots' world positions, read from the slots (not mapped through the
+	/// handedness), so a handedness change shows as a swap. Throws ToolError(501) where absent.
+	HandednessLogic::WandSlots WandSlotsWorld();
 }

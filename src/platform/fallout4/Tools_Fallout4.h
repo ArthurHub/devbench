@@ -9,6 +9,7 @@
 namespace RE
 {
 	class NiAVObject;
+	class Setting;
 }
 
 namespace dvb
@@ -37,6 +38,10 @@ namespace dvb
 	RE::NiAVObject* FindPlayerNode(std::string_view a_name, std::string_view a_root = {});
 	/// Main thread. The Wand node that follows one physical controller (Nodes_Fallout4.cpp).
 	RE::NiAVObject* WandNode(bool a_right);
+	/// Main thread. The primary or secondary Wand slot's node, whichever controller drives it (Nodes_Fallout4.cpp).
+	RE::NiAVObject* WandSlotNode(bool a_primary);
 	/// Main thread. True when bLeftHandedMode:VR makes the left controller the primary hand.
 	bool LeftHandedMode();
+	/// Any thread. The bLeftHandedMode:VR setting, or null on a runtime without it.
+	RE::Setting* LeftHandedSetting();
 }
