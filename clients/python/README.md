@@ -101,6 +101,20 @@ The manifest (`<folder>/manifest.json`) is written whole before `take` returns, 
 writes back each file that differs, deletes each file the globs list that the manifest lacks (case ignored), then
 removes the manifest. `take` raises while a backup is pending; `restore` raises when none is.
 
+Read what a plugin logged after a point, from its log in the extender's log folder:
+
+```python
+mark = LogMark(bench, "MyMod.log")  # the line count now; a missing file raises DevbenchError
+...
+mark.lines()  # the lines written since the mark
+mark.errors()  # those that are error or critical lines; errors(pattern=r"^\S+ warn") for others
+```
+
+`errors` matches the mods' `<time> error <msg>` format and devbench's own `[<time>] [E] <msg>`; `pattern` is a regex
+string or compiled pattern, found with `re.search`. A log shorter than the mark was restarted with the game, and all of
+it counts as new. The log tool returns at most the last 5000 lines, so more than that returns the last 5000 and
+`mark.missed` says how many were not read.
+
 Put Fallout 4 (or VR) in a test cell, so nothing a run does reaches a save:
 
 ```python
