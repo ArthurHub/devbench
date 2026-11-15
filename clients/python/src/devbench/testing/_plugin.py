@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import types
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
@@ -10,6 +12,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from devbench import vr
 from devbench.checks import RequirementError, require, require_actions, require_tools, require_version
 from devbench.client import Devbench, DevbenchError, ModTool, find_port
 from devbench.events import Events
@@ -55,6 +58,8 @@ class _Run:
     # the crashes of the setup failures captured so far: a session fixture's error fails every later test's setup
     # again, and only its first test takes the picture and log tail
     setup_crashes: set[tuple[str, int, str]] = field(default_factory=set)
+    # the handedness the game fixture set for the run (True: left-handed); None while it set none
+    left_handed: bool | None = None
 
     def backup(self, bench: Devbench) -> Backup | None:
         """The backup of Config.backup in <home>/.backup, or None when the config backs nothing up."""
@@ -66,6 +71,40 @@ class _Run:
         Backup writes is there.
         """
         return bool(self.config.backup) and (self.home / ".backup" / "manifest.json").is_file()
+
+    @property
+    def handedness_file(self) -> Path:
+        """Where the player's handedness waits while a run has changed it: <home>/.backup/handedness.json."""
+        return self.home / ".backup" / "handedness.json"
+
+    def handedness_pending(self) -> bool:
+        """Whether a player's handedness waits to be put back, checked without a connection to the game."""
+        return self.handedness_file.is_file()
+
+    def keep_handedness(self, bench: Devbench) -> bool:
+        """
+        Read the player's handedness and write it to handedness_file before the run changes it; returns it. The file
+        goes to a .partial first and replaces handedness_file only once whole.
+        """
+        was = vr.left_handed(bench)
+        self.handedness_file.parent.mkdir(parents=True, exist_ok=True)
+        partial = self.handedness_file.with_suffix(".partial")
+        partial.write_text(json.dumps({"leftHanded": was}), encoding="utf-8")
+        os.replace(partial, self.handedness_file)
+        return was
+
+    def restore_handedness(self, bench: Devbench) -> bool:
+        """Set the handedness handedness_file holds and delete the file; returns it. A set that fails keeps the file."""
+        value = bool(json.loads(self.handedness_file.read_text(encoding="utf-8"))["leftHanded"])
+        vr.set_left_handed(bench, value)
+        self.handedness_file.unlink()
+        return value
+
+    def wanted_left_handed(self, config: pytest.Config) -> bool | None:
+        """The handedness the run asks for: True with --left-handed, else Config.handedness; None leaves it alone."""
+        if config.getoption("--left-handed"):
+            return True
+        return None if self.config.handedness is None else self.config.handedness == "left"
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         self.record.add(report)
@@ -189,6 +228,10 @@ def _find_config(config: pytest.Config) -> tuple[Config, Path]:
     return devbench, Path(module.__file__).resolve().parent
 
 
+def _handed(left_handed: bool) -> str:
+    return "left-handed" if left_handed else "right-handed"
+
+
 def _run(config: pytest.Config) -> _Run:
     return config.stash[_RUN]
 
@@ -214,12 +257,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("devbench")
     group.addoption("--devbench-port", type=int, help="devbench's port; by default the one its runtime.json has")
     group.addoption(
-        "--e2e-restore", action="store_true", help="put back the files of a backup a run left, and run no test"
+        "--e2e-restore",
+        action="store_true",
+        help="put back the files and the handedness of a backup a run left, and run no test",
     )
+    group.addoption("--left-handed", action="store_true", help="run left-handed (VR), overriding Config.handedness")
 
 
 def pytest_configure(config: pytest.Config) -> None:
     devbench, home = _find_config(config)
+    if config.getoption("--left-handed") and not devbench.vr:
+        raise pytest.UsageError("devbench.testing: --left-handed needs a VR game (Config.vr)")
     record = Record(areas=devbench.areas, title=devbench.title or devbench.tool or devbench.game)
     record.directory = _report_root(devbench, home) / record.started.strftime("%Y%m%d-%H%M%S")
     run = _Run(devbench, home, record)
@@ -228,21 +276,34 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """With --e2e-restore: put back a backup a run left and exit, before any test is collected."""
+    """
+    With --e2e-restore: put back the files and the handedness a run left and exit, before any test is collected. A
+    handedness that cannot be set (no loaded game) is kept for the next try, and the exit code says so.
+    """
     config = session.config
     if not config.getoption("--e2e-restore"):
         return
     run = _run(config)
-    if not run.backup_pending():
+    if not run.backup_pending() and not run.handedness_pending():
         pytest.exit("no backup is waiting to be put back", returncode=0)
     bench = _connect(config)
+    said: list[str] = []
+    code = 0
     try:
-        backup = run.backup(bench)
-        assert backup is not None  # backup_pending holds only with Config.backup set
-        written, deleted = backup.restore()
+        if run.backup_pending():
+            backup = run.backup(bench)
+            assert backup is not None  # backup_pending holds only with Config.backup set
+            written, deleted = backup.restore()
+            said.append(f"put back the backup: {len(written)} files written, {len(deleted)} deleted")
+        if run.handedness_pending():
+            try:
+                said.append(f"put back the handedness: {_handed(run.restore_handedness(bench))}")
+            except (DevbenchError, OSError) as error:
+                code = _EXIT_CODE
+                said.append(f"kept the handedness to put back ({error}): run --e2e-restore again in a loaded game")
     finally:
         bench.close()
-    pytest.exit(f"put back the backup: {len(written)} files written, {len(deleted)} deleted", returncode=0)
+    pytest.exit("; ".join(said), returncode=code)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -287,8 +348,9 @@ def _check_mod(bench: Devbench, devbench: Config, run: _Run) -> None:
 def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
     """
     The game the tests run in: a leftover backup put back, the game entered in Config.cell and settled, the mod
-    checked, the files of Config.backup backed up and the log mark set. The backup is put back at the end, also when
-    the session fails; a crash leaves it for the next run or --e2e-restore.
+    checked, a leftover handedness put back, the files of Config.backup backed up, the run's handedness set and the
+    log mark set. The handedness, then the backup, are put back at the end, also when the session fails; a crash
+    leaves them for the next run or --e2e-restore.
     """
     run = _run(pytestconfig)
     devbench = run.config
@@ -313,8 +375,18 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
     if devbench.tool is not None:
         _setup_step(f"checking {devbench.tool}", lambda: _check_mod(bench, devbench, run))
 
+    if run.handedness_pending():
+        value = _setup_step("putting back the handedness an earlier run left", lambda: run.restore_handedness(bench))
+        record.note(f"Put back the handedness an earlier run left: {_handed(value)}.")
+
     files = _setup_step("taking the backup", backup.take) if backup is not None else 0
     try:
+        wanted = run.wanted_left_handed(pytestconfig)
+        if wanted is not None:
+            _setup_step("reading the player's handedness", lambda: run.keep_handedness(bench))
+            _setup_step(f"setting the game {_handed(wanted)}", lambda: vr.set_left_handed(bench, wanted))
+            run.left_handed = wanted
+            record.note(f"Ran {_handed(wanted)}.")
         if devbench.log is not None:
             log = devbench.log
             run.mark = _setup_step(f"marking {log}", lambda: LogMark(bench, log))
@@ -322,6 +394,12 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
         yield bench
     finally:
         run.game = None
+        unrestored: Exception | None = None
+        if run.handedness_pending():
+            try:
+                record.note(f"Put the player's handedness back: {_handed(run.restore_handedness(bench))}.")
+            except Exception as error:
+                unrestored = error
         if backup is not None:
             try:
                 written, deleted = backup.restore()
@@ -333,6 +411,10 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
                 f"Backed up {files} files, and put them back after: {len(written)} written again, "
                 f"{len(deleted)} the run made deleted."
             )
+        if unrestored is not None:
+            raise RuntimeError(
+                f"the handedness was not put back: {unrestored}: run pytest --e2e-restore once the game answers"
+            ) from unrestored
 
 
 @pytest.fixture(scope="session")
@@ -375,6 +457,13 @@ def devbench_test_mark(request: pytest.FixtureRequest) -> None:
         run.test_mark = (request.node.nodeid, LogMark(game, log))
     except (DevbenchError, OSError):
         pass
+
+
+@pytest.fixture(scope="session", name="left_handed")
+def left_handed_fixture(game: Devbench, pytestconfig: pytest.Config) -> bool:
+    """Whether the run is left-handed: what the game fixture set (--left-handed, Config.handedness), else the game's."""
+    run = _run(pytestconfig)
+    return run.left_handed if run.left_handed is not None else vr.left_handed(game)
 
 
 # named so the package's report attribute stays the devbench.testing.report module

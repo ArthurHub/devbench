@@ -192,22 +192,25 @@ DEVBENCH = devbench.testing.Config(
     cell="QASmoke",  # the interior cell the game runs in
     picture=6,  # the render target dumped when a test fails (FO4VR: 6, the lit frame); None: no picture
     report_dir=None,  # where the report's run folders go; None: build/e2e under the repo root
+    handedness="right",  # VR: "left" / "right" for the run, the player's put back after; None: leave it
 )
 ```
 
 Fixtures:
 
-| Fixture              | Gives                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `bench` (session)    | the `Devbench`, checked to be the configured game and VR; connects only when a test needs it                |
-| `game` (session)     | the `Devbench`, once the game is set up (below); the backup is put back at the end, also when the run fails |
-| `mod` (session)      | `ModTool` of `tool`                                                                                         |
-| `events`             | `Events` from the start of the test, with the mod's tool as prefix                                          |
-| `log_mark` (session) | the `LogMark` in `log`, set just before the first test                                                      |
-| `report` (session)   | the run's record, which the HTML report renders (below)                                                     |
+| Fixture                 | Gives                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `bench` (session)       | the `Devbench`, checked to be the configured game and VR; connects only when a test needs it                |
+| `game` (session)        | the `Devbench`, once the game is set up (below); the backup is put back at the end, also when the run fails |
+| `mod` (session)         | `ModTool` of `tool`                                                                                         |
+| `events`                | `Events` from the start of the test, with the mod's tool as prefix                                          |
+| `log_mark` (session)    | the `LogMark` in `log`, set just before the first test                                                      |
+| `left_handed` (session) | whether the run is left-handed: what `game` set, else the game's own                                        |
+| `report` (session)      | the run's record, which the HTML report renders (below)                                                     |
 
 `game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
-`require_actions`, then `require_version`), takes the backup into `.backup/` beside the conftest, and sets the log mark.
+`require_actions`, then `require_version`), puts back a handedness a crashed run left, takes the backup into `.backup/`
+beside the conftest, sets the run's handedness, and sets the log mark.
 A setup failure (another game, a missing action, another build, a game outside the cell) exits the run with code 2 and
 the message that says what to do.
 
@@ -215,16 +218,22 @@ Tests run in `areas` order; files it does not list run last. `--devbench-port` p
 `runtime.json`). `--e2e-restore` puts back a backup a run left and runs no test; a restore that fails at the end of a
 run keeps the backup for it.
 
+With `handedness` (or `--left-handed`, which overrides it) `game` writes the player's handedness to
+`.backup/handedness.json`, sets the run's with `set_left_handed` (devbench answers once the game's wands have swapped)
+and notes "Ran left-handed." / "Ran right-handed." in the report. At the end it puts the player's back, before the
+files, also when the run fails, and deletes the file. A file a crashed run left is put back at the next run's start or
+by `--e2e-restore`; one `--e2e-restore` cannot set (no loaded game) is kept, and it exits with code 2.
+
 A mod's own session setup wraps `game`: a fixture of the same name in its conftest requests the plugin's. Its setup runs
-after the backup and the log mark, its teardown before the backup is put back:
+after the backup, the handedness and the log mark (so it can wait for its mod to follow the handedness), its teardown
+before the handedness and the backup are put back:
 
 ```python
 @pytest.fixture(scope="session")
-def game(game, report):
-    was_left_handed = set_left_handed(game, False)
-    report.note("Ran right-handed.")
+def game(game, left_handed, report):
+    wait_until(lambda: MyMod(game).left_handed() == left_handed, 5, what="the mod following the handedness")
     yield game
-    set_left_handed(game, was_left_handed)
+    MyMod(game).clear()
 ```
 
 ### Report

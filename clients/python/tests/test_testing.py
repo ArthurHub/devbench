@@ -1,5 +1,6 @@
 """The pytest plugin: inner pytest sessions against the fake devbench, scripted as a game already in the test cell."""
 
+import json
 import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -31,6 +32,7 @@ DEVBENCH = devbench.testing.Config(
     areas={AREAS},
     title="My Mod",
     picture=94,
+    handedness={HANDEDNESS},
 )
 """
 
@@ -51,6 +53,10 @@ class FakeGame:
         self.files = FakeFiles({MOD_FILE: b"original"})
         self.log = ["started"]
         self.dumps = []
+        # the game's handedness, the sets the input tool took, and the value a set of fails (504)
+        self.left_handed = False
+        self.handedness_sets = []
+        self.refuse_handedness = None
         fake.tools["ping"] = lambda args: {"ok": True, "game": "fallout4", "vr": True}
         fake.tools["menu"] = self._menu
         fake.tools["inspect"] = lambda args: {"ok": True, "playerLoaded": True}
@@ -59,6 +65,7 @@ class FakeGame:
         fake.tools["files"] = self.files
         fake.tools["log"] = lambda args: {"ok": True, "linesScanned": len(self.log), "lines": list(self.log)}
         fake.tools["rendertarget"] = self._dump
+        fake.tools["input"] = self._input
 
     def _mod(self, args, version, actions):
         if args["action"] == "say":
@@ -72,6 +79,16 @@ class FakeGame:
         self.files.files[(DUMP_KEY[0], DUMP_KEY[1].format(n=n))] = make_bmp(6, 2, lambda x, y: _dumped(x, y, n))
         return {"ok": True, "file": DUMP_FILE.format(n=n)}
 
+    def _input(self, args):
+        assert args["action"] == "handedness"
+        if "leftHanded" not in args:
+            return {"leftHanded": self.left_handed}
+        if args["leftHanded"] == self.refuse_handedness:
+            return 504, {"ok": False, "error": "the wands did not swap"}
+        self.handedness_sets.append(args["leftHanded"])
+        was, self.left_handed = self.left_handed, args["leftHanded"]
+        return {"leftHanded": self.left_handed, "was": was, "changed": was != self.left_handed, "elapsedMs": 200}
+
     def _menu(self, args):
         assert args["action"] == "list"
         return {"ok": True, "openMenus": ["HUDMenu"], "messageBoxOpen": False}
@@ -82,8 +99,8 @@ def game(fake):
     return FakeGame(fake)
 
 
-def _conftest(pytester, areas=None):
-    pytester.makeconftest(CONFTEST.replace("{AREAS}", repr(areas or {})))
+def _conftest(pytester, areas=None, handedness=None):
+    pytester.makeconftest(CONFTEST.replace("{AREAS}", repr(areas or {})).replace("{HANDEDNESS}", repr(handedness)))
 
 
 def _record(reprec):
@@ -286,7 +303,7 @@ def test_mod_and_log_mark_need_their_config_fields(pytester, fake, game):
 
 def test_a_mod_wraps_the_game_fixture(pytester, fake, game):
     pytester.makeconftest(
-        CONFTEST.replace("{AREAS}", "{}")
+        CONFTEST.replace("{AREAS}", "{}").replace("{HANDEDNESS}", "None")
         + """
 import pytest
 from devbench import write_text
@@ -374,7 +391,7 @@ def test_the_first_failed_picture_turns_pictures_off(pytester, fake, game):
 
 def test_a_failed_session_fixture_is_captured_once(pytester, fake, game):
     pytester.makeconftest(
-        CONFTEST.replace("{AREAS}", "{}")
+        CONFTEST.replace("{AREAS}", "{}").replace("{HANDEDNESS}", "None")
         + """
 import pytest
 
@@ -429,3 +446,148 @@ def test_report_dir_holds_the_run_folders(pytester, fake):
     page, _ = _page(result)
     assert page.parent.parent == pytester.path / "out" / "e2e"
     result.stdout.no_fnmatch_line("*PytestAssertRewriteWarning*")
+
+
+def test_config_rejects_an_unknown_handedness_and_one_without_vr():
+    with pytest.raises(ValueError, match="unknown handedness 'both'"):
+        Config(game="fallout4", vr=True, handedness="both")
+    with pytest.raises(ValueError, match="needs vr=True"):
+        Config(game="fallout4", vr=False, handedness="left")
+
+
+HANDED_TEST = """
+from devbench.vr import left_handed as game_left_handed
+
+def test_runs_left_handed(game, left_handed):
+    assert left_handed is True
+    assert game_left_handed(game) is True
+"""
+
+
+def test_a_run_sets_the_handedness_and_puts_the_players_back(pytester, fake, game):
+    _conftest(pytester, handedness="left")
+    pytester.makepyfile(test_light=HANDED_TEST)
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=1)
+    assert game.handedness_sets == [True, False]
+    assert not game.left_handed
+    assert not (pytester.path / ".backup" / "handedness.json").exists()
+    notes = _record(reprec).notes
+    assert "Ran left-handed." in notes
+    assert "Put the player's handedness back: right-handed." in notes
+
+
+def test_left_handed_option_overrides_the_config(pytester, fake, game):
+    _conftest(pytester, handedness="right")
+    pytester.makepyfile(test_light=HANDED_TEST)
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port), "--left-handed")
+
+    reprec.assertoutcome(passed=1)
+    assert game.handedness_sets == [True, False]
+
+
+def test_a_failed_session_still_puts_the_handedness_back(pytester, fake, game):
+    _conftest(pytester, handedness="left")
+    pytester.makepyfile(test_light="def test_fails(game): assert False")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(failed=1)
+    assert not game.left_handed
+    assert not (pytester.path / ".backup" / "handedness.json").exists()
+
+
+def test_without_a_handedness_the_run_leaves_it_and_the_fixture_reads_the_game(pytester, fake, game):
+    game.left_handed = True
+    _conftest(pytester)
+    pytester.makepyfile(test_light="def test_reads(left_handed): assert left_handed is True")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=1)
+    assert game.handedness_sets == []
+    assert not any("handed" in note for note in _record(reprec).notes)
+
+
+def test_a_set_the_game_did_not_follow_exits_and_leaves_the_players(pytester, fake, game):
+    game.refuse_handedness = True
+    _conftest(pytester, handedness="left")
+    pytester.makepyfile(test_light="def test_never_runs(game): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    assert result.ret == 2
+    result.stdout.fnmatch_lines(["*setting the game left-handed*the wands did not swap*"])
+    assert not game.left_handed
+    assert not (pytester.path / ".backup" / "handedness.json").exists()
+    assert game.files.files == {MOD_FILE: b"original"}
+
+
+def _leave_handedness(pytester, left_handed):
+    """The handedness.json a crashed run leaves: the player's value, kept while the run had changed it."""
+    folder = pytester.path / ".backup"
+    folder.mkdir(exist_ok=True)
+    (folder / "handedness.json").write_text(json.dumps({"leftHanded": left_handed}), encoding="utf-8")
+
+
+def test_a_leftover_handedness_is_put_back_before_the_run(pytester, fake, game):
+    game.left_handed = True
+    _leave_handedness(pytester, False)
+    _conftest(pytester)
+    pytester.makepyfile(test_light="def test_reads(left_handed): assert left_handed is False")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=1)
+    assert game.handedness_sets == [False]
+    assert not (pytester.path / ".backup" / "handedness.json").exists()
+    assert "Put back the handedness an earlier run left: right-handed." in _record(reprec).notes
+
+
+def test_e2e_restore_puts_the_handedness_back(pytester, fake, game):
+    game.left_handed = True
+    _leave_handedness(pytester, False)
+    _conftest(pytester)
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--e2e-restore")
+
+    assert result.ret == 0
+    result.stdout.fnmatch_lines(["*put back the handedness: right-handed*"])
+    assert not game.left_handed
+    assert not (pytester.path / ".backup" / "handedness.json").exists()
+
+
+def test_e2e_restore_keeps_a_handedness_it_cannot_set_and_still_puts_the_files_back(pytester, fake, game, bench):
+    Backup(bench, [("mygames", "Mods_Config/MyMod/*")], pytester.path / ".backup").take()
+    game.files.files[MOD_FILE] = b"left by a crashed run"
+    game.left_handed = True
+    game.refuse_handedness = False
+    _leave_handedness(pytester, False)
+    _conftest(pytester)
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--e2e-restore")
+
+    assert result.ret == 2
+    result.stdout.fnmatch_lines(["*put back the backup: 1 files written*kept the handedness to put back*"])
+    assert game.files.files == {MOD_FILE: b"original"}
+    assert (pytester.path / ".backup" / "handedness.json").exists()
+
+
+def test_left_handed_needs_a_vr_game(pytester):
+    pytester.makeconftest(
+        """
+        import devbench.testing
+
+        pytest_plugins = ["devbench.testing"]
+        DEVBENCH = devbench.testing.Config(game="fallout4", vr=False)
+        """
+    )
+    pytester.makepyfile(test_a="def test_one(): pass")
+
+    result = pytester.runpytest("--left-handed")
+
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*--left-handed needs a VR game*"])

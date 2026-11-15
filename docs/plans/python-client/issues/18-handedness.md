@@ -1,6 +1,6 @@
 # 18 Handedness
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Source: the flashlight suite's `set_left_handed`, `physical_hand` and its
