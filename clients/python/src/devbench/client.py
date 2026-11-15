@@ -149,6 +149,18 @@ class Devbench:
             raise DevbenchError(f"health: HTTP {status} {answer}", status=status, answer=answer)
         return answer
 
+    def tools(self) -> list[str]:
+        """
+        The names of the tools devbench offers now (GET /api/tools), mods' tools included. A non-200 status or an
+        answer without a tools list raises DevbenchError.
+        """
+        status, raw = self._request("GET", "/api/tools")
+        answer = _decode(status, raw, "tools", None)
+        listed = answer.get("tools") if isinstance(answer, dict) else None
+        if status != 200 or not isinstance(listed, list):
+            raise DevbenchError(f"tools: HTTP {status} {answer}", status=status, answer=answer)
+        return [tool["name"] for tool in listed]
+
     def _events(self, since: int) -> tuple[int, list[dict[str, Any]]]:
         """
         One read of devbench's recent event ring (GET /api/events): the head seq and the events after since, oldest

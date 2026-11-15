@@ -118,6 +118,14 @@ def test_health(fake, bench):
     assert fake.calls == [("GET", "/api/health", None)]
 
 
+def test_tools_lists_the_names(fake, bench):
+    fake.tools["ping"] = lambda args: {"ok": True}
+    fake.tools["menu"] = lambda args: {"ok": True}
+
+    assert bench.tools() == ["menu", "ping"]
+    assert fake.calls == [("GET", "/api/tools", None)]
+
+
 def test_health_non_200_raises(fake, bench):
     fake.health = (503, {"ok": False})
 

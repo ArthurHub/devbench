@@ -16,7 +16,8 @@ ToolHandler = Callable[[dict[str, Any]], Any]
 
 class FakeDevbench:
     """
-    Answers /api/tool/<name> from tools, /api/health from health and /api/events?since=<seq> from events, on a free
+    Answers /api/tool/<name> and the /api/tools listing from tools, /api/health from health and
+    /api/events?since=<seq> from events, on a free
     port of 127.0.0.1 with HTTP/1.1 keep-alive. calls records each request as (method, path, body); connections
     counts the TCP connections accepted. drop_next() closes the socket after the next answer, as a restarting game does.
     """
@@ -87,6 +88,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.fake._record("GET", self.path, None)
         if url.path == "/api/health":
             self._answer(self.fake.health)
+        elif url.path == "/api/tools":
+            names = sorted(self.fake.tools)
+            self._answer({"tools": [{"name": name, "description": "", "inputSchema": {}} for name in names]})
         elif url.path == "/api/events":
             since = int(parse_qs(url.query).get("since", ["0"])[0])
             with self.fake._lock:

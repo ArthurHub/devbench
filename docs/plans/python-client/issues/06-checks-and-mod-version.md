@@ -1,6 +1,6 @@
 # 06 Checks and the mod version check
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 Spec: [../spec.md](../spec.md). Source: `_connect` and `_check_mod` in the flashlight conftest.

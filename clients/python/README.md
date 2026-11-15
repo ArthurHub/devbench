@@ -28,6 +28,19 @@ with Devbench(find_port("fallout4", vr=True)) as bench:
     print(ModTool(bench, "immersiveflashlightvr").health())
 ```
 
+Check that the running game is the one a run needs before using it. Each check raises `RequirementError` with a
+message that says what was found and what to do ("deploy this build"):
+
+```python
+from devbench import require, require_actions, require_tools, require_version
+
+require(bench, "fallout4", vr=True)  # the ping answer; no answer or another game raises
+require_tools(bench, ["frik"])  # from devbench's tool listing (bench.tools())
+mod = ModTool(bench, "immersiveflashlightvr")
+require_actions(mod, ["gesture", "zones", "light"])  # from the mod tool's health
+require_version(mod, "1.4.2")  # exact match with the health's version; returns the health
+```
+
 Read what an action caused from devbench's events. `Events` sees only events published after it was made; with a
 prefix (a mod's tool name) a topic also matches as `<prefix>.<topic>`:
 
