@@ -176,6 +176,8 @@ DEVBENCH = devbench.testing.Config(
     areas={"test_light.py": "Light action", "test_health.py": "Health"},  # run order, by test-file name
     title="Immersive Flashlight VR",
     cell="QASmoke",  # the interior cell the game runs in
+    picture=6,  # the render target dumped when a test fails (FO4VR: 6, the lit frame); None: no picture
+    report_dir=None,  # where the report's run folders go; None: build/e2e under the repo root
 )
 ```
 
@@ -188,7 +190,7 @@ Fixtures:
 | `mod` (session)      | `ModTool` of `tool`                                                                                         |
 | `events`             | `Events` from the start of the test, with the mod's tool as prefix                                          |
 | `log_mark` (session) | the `LogMark` in `log`, set just before the first test                                                      |
-| `report` (session)   | the run's record: `note(text)`, `dialogs` closed, `results` per test (area, outcome, phase, message)        |
+| `report` (session)   | the run's record, which the HTML report renders (below)                                                     |
 
 `game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
 `require_actions`, then `require_version`), takes the backup into `.backup/` beside the conftest, and sets the log mark.
@@ -210,6 +212,37 @@ def game(game, report):
     yield game
     set_left_handed(game, was_left_handed)
 ```
+
+### Report
+
+At the end of a run the plugin writes one HTML page and prints its link: `build/e2e/<YYYYmmdd-HHMMSS>/index.html`
+under the first folder up from the `DEVBENCH` conftest that holds a `.git` (`report_dir` overrides
+`<repo>/build/e2e`; relative to the conftest's folder). It shows the totals, the notes, the failures, each test's
+result by area in `areas` order, the mod's sections, the game dialogs the run closed and a gallery of the mod's
+pictures. Nothing is written for `--collect-only`, `--e2e-restore` or a run without results.
+
+When a test that uses `game` fails, the failure row gets:
+
+- the lines `log` gained since the test started (the last 100, collapsed);
+- a picture of render target `picture` (`rendertarget dump` at 2048, the game's copy deleted, saved beside the page as
+  PNG; in VR only the left eye, 1024x1088 on FO4VR). The first picture that can't be taken (a 501 off the main thread,
+  a wrong index) says why in its row and in a note, and no later failure tries again.
+
+A test adds to the page through the `report` fixture:
+
+```python
+def test_reach(game, report, request):
+    report.note("Ran right-handed.")  # a line about the whole run
+    report.section("Placements", intro="each hand placed", columns=["Test", "Landed"])
+    report.section("Placements", rows=[[request.node.name, "1.2 cm"]])  # the same title adds rows
+    report.section("Perf", html="<pre>...</pre>")  # raw HTML instead of a table
+    path = report.picture(request.node.nodeid, label="the panel")  # a file for the mod to write, shown if it does
+    (report.folder / "perf.json").write_text("{}")  # a file beside the page
+```
+
+Sections show after the areas, in the order first added; a section is a table or HTML, and a call of the other shape,
+other columns or a row of another length raises `ValueError`. `devbench.testing.report.render(record)` renders a
+`Record` without a pytest session.
 
 ## Develop
 

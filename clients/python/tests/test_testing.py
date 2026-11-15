@@ -1,12 +1,20 @@
 """The pytest plugin: inner pytest sessions against the fake devbench, scripted as a game already in the test cell."""
 
+import re
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
 import pytest
-from fake_devbench import FakeFiles
+from fake_devbench import FakeFiles, make_bmp, read_png
 
 from devbench import Backup
 from devbench.testing import Config
 
 MOD_FILE = ("mygames", "Mods_Config/MyMod/MyMod.toml")
+
+# where the fake rendertarget tool says it dumped a target, and that file in the files tool
+DUMP_FILE = r"C:\Games\Fallout 4 VR\Data\F4SE\Plugins\devbench\captures\rt-{n}.bmp"
+DUMP_KEY = ("data", "F4SE/Plugins/devbench/captures/rt-{n}.bmp")
 
 CONFTEST = """
 import devbench.testing
@@ -22,26 +30,47 @@ DEVBENCH = devbench.testing.Config(
     log="MyMod.log",
     areas={AREAS},
     title="My Mod",
+    picture=94,
 )
 """
+
+
+def _dumped(x, y, n=1):
+    """The fake dump's pixel: its column, row and the dump's number."""
+    return bytes([x, y, n])
 
 
 class FakeGame:
     """
     The fake devbench as Fallout 4 VR with a game loaded in QASmoke, no message box open, the mod's tool (mymod)
-    offering actions at version, its config file in the files tool and its log.
+    offering actions at version (its "say" action writes a line to its log), its config file in the files tool, its
+    log, and render targets that dump into the files tool.
     """
 
     def __init__(self, fake, actions=("light", "zones"), version="1.2.3"):
         self.files = FakeFiles({MOD_FILE: b"original"})
         self.log = ["started"]
+        self.dumps = []
         fake.tools["ping"] = lambda args: {"ok": True, "game": "fallout4", "vr": True}
         fake.tools["menu"] = self._menu
         fake.tools["inspect"] = lambda args: {"ok": True, "playerLoaded": True}
         fake.tools["console"] = lambda args: {"ok": True, "compiled": True, "lines": ["GetInCell >> 1.00"]}
-        fake.tools["mymod"] = lambda args: {"ok": True, "version": version, "actions": list(actions)}
+        fake.tools["mymod"] = lambda args: self._mod(args, version, actions)
         fake.tools["files"] = self.files
         fake.tools["log"] = lambda args: {"ok": True, "linesScanned": len(self.log), "lines": list(self.log)}
+        fake.tools["rendertarget"] = self._dump
+
+    def _mod(self, args, version, actions):
+        if args["action"] == "say":
+            self.log.append(args["text"])
+        return {"ok": True, "version": version, "actions": list(actions)}
+
+    def _dump(self, args):
+        assert (args["action"], args["maxDimension"]) == ("dump", 2048)
+        self.dumps.append(args["index"])
+        n = len(self.dumps)
+        self.files.files[(DUMP_KEY[0], DUMP_KEY[1].format(n=n))] = make_bmp(6, 2, lambda x, y: _dumped(x, y, n))
+        return {"ok": True, "file": DUMP_FILE.format(n=n)}
 
     def _menu(self, args):
         assert args["action"] == "list"
@@ -278,3 +307,105 @@ def game(game, report):
     assert game.files.files == {MOD_FILE: b"original"}
     notes = _record(reprec).notes
     assert notes.index("mod setup") < notes.index("mod teardown") < len(notes) - 1
+
+
+def _page(result):
+    """The report page a run printed the link of, and its text."""
+    [line] = [line for line in result.outlines if line.startswith("Report: ")]
+    page = Path(unquote(urlsplit(line.removeprefix("Report: ")).path).lstrip("/"))
+    return page, page.read_text(encoding="utf-8")
+
+
+def test_the_report_has_areas_failures_pictures_and_a_mod_section(pytester, fake, game):
+    _conftest(pytester, areas={"test_b.py": "Area B", "test_a.py": "Area A"})
+    pytester.makepyfile(
+        test_a="""
+        def test_breaks(mod):
+            mod.call("say", text="before the failure")
+            assert False, "it broke"
+        """,
+        test_b="""
+        def test_adds_a_section(game, report, request):
+            report.section("Placements", intro="where the hands went", columns=["Hand", "Landed"])
+            report.section("Placements", rows=[["left", "<1 cm>"]])
+            report.picture(request.node.nodeid, label="the panel").write_bytes(b"png")
+            report.picture(request.node.nodeid, label="never written")
+        """,
+    )
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    result.assert_outcomes(passed=1, failed=1)
+    page, text = _page(result)
+    assert page.parent.parent == pytester.path / "build" / "e2e"
+    headings = re.findall(r"<h2>(.*?)</h2>", text)
+    assert headings == ["Failures", "Area B", "Area A", "Placements", "Pictures"]
+    failures = text[text.index("<h2>Failures") : text.index("<h2>Area B")]
+    assert "it broke" in failures and "<pre>before the failure</pre>" in failures
+    assert "pictures/003-test_breaks.png" in failures
+    width, height, pixels = read_png((page.parent / "pictures" / "003-test_breaks.png").read_bytes())
+    assert (width, height) == (3, 2)
+    assert pixels == [[tuple(_dumped(x, y))[::-1] for x in range(3)] for y in (1, 0)]
+    assert game.dumps == [94]
+    assert not any(root == "data" for root, _ in game.files.files)
+    assert "where the hands went" in text and "&lt;1 cm&gt;" in text
+    gallery = text[text.index("<h2>Pictures") :]
+    assert "001-test_adds_a_section.png" in gallery and "the panel" in gallery and "never written" not in gallery
+
+
+def test_the_first_failed_picture_turns_pictures_off(pytester, fake, game):
+    fake.tools["rendertarget"] = lambda args: (501, {"ok": False, "error": "rendertarget: off on this runtime"})
+    _conftest(pytester)
+    pytester.makepyfile(test_a="def test_one(game): assert False\ndef test_two(game): assert False")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(failed=2)
+    record = _record(reprec)
+    first, second = (record.failures[f"test_a.py::test_{n}"] for n in ("one", "two"))
+    assert first.picture is None and "off on this runtime" in first.picture_error
+    assert second.picture is None and second.picture_error is None
+    assert first.log == [] and second.log == []
+    assert [note for note in record.notes if note.startswith("No failure pictures")] == [
+        f"No failure pictures from test_a.py::test_one on: {first.picture_error}"
+    ]
+    assert sum(path == "/api/tool/rendertarget" for _, path, _ in fake.calls) == 1
+
+
+def test_a_test_without_the_game_takes_no_picture(pytester, fake, game):
+    _conftest(pytester)
+    pytester.makepyfile(test_a="def test_one(): assert False")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(failed=1)
+    assert _record(reprec).failures == {}
+    assert fake.calls == []
+
+
+def test_collect_only_writes_no_report(pytester, fake):
+    _conftest(pytester)
+    pytester.makepyfile(test_a="def test_one(): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--collect-only")
+
+    result.stdout.no_fnmatch_line("Report: *")
+    assert not (pytester.path / "build").exists()
+
+
+def test_report_dir_holds_the_run_folders(pytester, fake):
+    pytester.makeconftest(
+        """
+        import devbench.testing
+
+        pytest_plugins = ["devbench.testing"]
+        DEVBENCH = devbench.testing.Config(game="fallout4", vr=True, report_dir="out/e2e")
+        """
+    )
+    pytester.makepyfile(test_a="def test_one(): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    page, _ = _page(result)
+    assert page.parent.parent == pytester.path / "out" / "e2e"
+    result.stdout.no_fnmatch_line("*PytestAssertRewriteWarning*")

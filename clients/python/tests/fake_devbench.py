@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+import struct
 import threading
+import zlib
 from collections.abc import Callable
 from fnmatch import fnmatchcase
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -189,3 +191,39 @@ class FakeFiles:
             self.deletes.append(f"{root}/{path}")
             return {"ok": True, "deleted": True}
         raise AssertionError(f"unexpected files action {action}")
+
+
+def make_bmp(width, height, pixel, bits=24, top_down=False):
+    """
+    An uncompressed BMP as devbench writes a dump: pixel(x, y) gives each stored pixel's 3 bytes (B, G, R), row y in
+    file order (bottom-up unless top_down, which stores a negative height), rows padded to 4 bytes.
+    """
+    stride = (width * 3 + 3) & ~3
+    rows = b"".join(b"".join(pixel(x, y) for x in range(width)) + bytes(stride - width * 3) for y in range(height))
+    stored_height = -height if top_down else height
+    info = struct.pack("<IiiHHIIiiII", 40, width, stored_height, 1, bits, 0, len(rows), 2835, 2835, 0, 0)
+    return b"BM" + struct.pack("<IHHI", 54 + len(rows), 0, 0, 54) + info + rows
+
+
+def read_png(data):
+    """
+    The width, height and pixels (rows top-down of (R, G, B)) of an 8-bit RGB PNG whose scanlines are all filter 0,
+    as bmp_to_png writes them; asserts the format and each chunk's CRC.
+    """
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    chunks, at = {}, 8
+    while at < len(data):
+        (length,) = struct.unpack_from(">I", data, at)
+        kind, body = data[at + 4 : at + 8], data[at + 8 : at + 8 + length]
+        assert struct.unpack_from(">I", data, at + 8 + length)[0] == zlib.crc32(kind + body)
+        chunks[kind] = chunks.get(kind, b"") + body
+        at += 12 + length
+    width, height, depth, color = struct.unpack(">IIBB", chunks[b"IHDR"][:10])
+    assert (depth, color) == (8, 2) and b"IEND" in chunks
+    raw = zlib.decompress(chunks[b"IDAT"])
+    line = 1 + width * 3
+    assert all(raw[row * line] == 0 for row in range(height))
+    pixels = [
+        [tuple(raw[row * line + 1 + x * 3 : row * line + 4 + x * 3]) for x in range(width)] for row in range(height)
+    ]
+    return width, height, pixels

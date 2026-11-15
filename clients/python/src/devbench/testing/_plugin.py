@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import types
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from pathlib import Path
+from collections.abc import Callable, Generator, Iterator
+from dataclasses import dataclass, field
+from pathlib import Path, PureWindowsPath
 from typing import Any, NoReturn
 
 import pytest
@@ -13,14 +13,22 @@ import pytest
 from devbench.checks import RequirementError, require, require_actions, require_tools, require_version
 from devbench.client import Devbench, DevbenchError, ModTool, find_port
 from devbench.events import Events
-from devbench.files import Backup
+from devbench.files import Backup, delete_file, read_bytes
 from devbench.games import fallout4
 from devbench.log import LogMark
 from devbench.testing._config import Config
-from devbench.testing._record import Record
+from devbench.testing._picture import bmp_to_png
+from devbench.testing._record import Failure, Record
+from devbench.testing.report import write
 
 # what setup failures exit the session with
 _EXIT_CODE = 2
+
+# the log lines since the test started that a failure keeps
+_LOG_TAIL = 100
+
+# the longest side of a failure's dump, in pixels: a third of FO4VR's 6144-wide frame, so each eye is 1024 wide
+_PICTURE_SIZE = 2048
 
 # the game setup of each game: enter a game the tests can run in, and say what was done
 _ENTER: dict[str, Callable[[Devbench, str], fallout4.Entered]] = {
@@ -32,13 +40,18 @@ _ENTER: dict[str, Callable[[Devbench, str], fallout4.Entered]] = {
 class _Run:
     """
     The session's state, kept on pytest's config: the mod's Config, the folder of the conftest that defines it, the
-    run's record and the log mark the game fixture took. Registered as a plugin, it records each test's result.
+    run's record, the log mark the game fixture took, the game while that fixture is up, and the current test's log
+    mark. Registered as a plugin, it records each test's result and what a failed test leaves.
     """
 
     config: Config
     home: Path
     record: Record
     mark: LogMark | None = None
+    game: Devbench | None = None
+    test_mark: tuple[str, LogMark] | None = None
+    # set by the first failure picture that could not be taken: no later failure tries again
+    pictures_off: bool = field(default=False)
 
     def backup(self, bench: Devbench) -> Backup | None:
         """The backup of Config.backup in <home>/.backup, or None when the config backs nothing up."""
@@ -54,8 +67,81 @@ class _Run:
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         self.record.add(report)
 
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_makereport(
+        self, item: pytest.Item, call: pytest.CallInfo[None]
+    ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+        """
+        On the first failed phase of a test that uses the game fixture, while the game is up: take its failure
+        picture and log tail, before its teardown changes what the game shows.
+        """
+        report = yield
+        failures = self.record.failures
+        if report.failed and self.game is not None and "game" in item.fixturenames and item.nodeid not in failures:
+            failures[item.nodeid] = self._capture(self.game, item.nodeid)
+        return report
+
+    def _capture(self, game: Devbench, nodeid: str) -> Failure:
+        """
+        What a failed test leaves: the log lines since it started (when Config.log is set) and a picture of
+        Config.picture. The first picture that cannot be taken says why in its row and a note, and turns pictures off.
+        """
+        failure = Failure()
+        if self.test_mark is not None and self.test_mark[0] == nodeid:
+            try:
+                failure.log = self.test_mark[1].lines()[-_LOG_TAIL:]
+            except (DevbenchError, OSError) as error:
+                failure.log = [f"the log could not be read: {error}"]
+        if self.config.picture is not None and not self.pictures_off:
+            try:
+                failure.picture = self._picture(game, nodeid)
+            except (DevbenchError, OSError, KeyError, ValueError) as error:
+                failure.picture_error = str(error)
+                self.pictures_off = True
+                self.record.note(f"No failure pictures from {nodeid} on: {error}")
+        return failure
+
+    def _picture(self, game: Devbench, nodeid: str) -> str:
+        """
+        Dump Config.picture, delete the game's copy and save it in the report's pictures folder as a PNG (in VR, only
+        the left eye); returns its path in the report folder. The dump lands under the game's Data folder, which the
+        files tool reads as "data".
+        """
+        answer = game.tool("rendertarget", action="dump", index=self.config.picture, maxDimension=_PICTURE_SIZE)
+        path = _data_path(answer["file"])
+        data = read_bytes(game, "data", path)
+        if data is None:
+            raise DevbenchError(f"the dump {path} is not in the Data folder the files tool sees")
+        delete_file(game, "data", path)
+        local = self.record.reserve(nodeid, ".png")
+        local.write_bytes(bmp_to_png(data, left_half=self.config.vr))
+        return local.relative_to(self.record.folder).as_posix()
+
 
 _RUN = pytest.StashKey[_Run]()
+
+
+def _data_path(file: str) -> str:
+    """
+    A file's path under the game's Data folder, '/' separated, from its absolute path: what follows the last folder
+    named Data. ValueError when no folder is.
+    """
+    parts = PureWindowsPath(file).parts
+    data = [i for i, part in enumerate(parts) if part.lower() == "data"]
+    if not data:
+        raise ValueError(f"the dump {file} is not under the game's Data folder")
+    return "/".join(parts[data[-1] + 1 :])
+
+
+def _report_root(devbench: Config, home: Path) -> Path:
+    """
+    The folder the report's run folders go in: Config.report_dir (relative: to home), or build/e2e under the first
+    folder from home up that holds a .git, or under home when none does.
+    """
+    if devbench.report_dir is not None:
+        return home / devbench.report_dir
+    repo = next((folder for folder in (home, *home.parents) if (folder / ".git").exists()), home)
+    return repo / "build" / "e2e"
 
 
 def _find_config(config: pytest.Config) -> tuple[Config, Path]:
@@ -118,7 +204,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     devbench, home = _find_config(config)
-    run = _Run(devbench, home, Record(areas=devbench.areas))
+    record = Record(areas=devbench.areas, title=devbench.title or devbench.tool or devbench.game)
+    record.directory = _report_root(devbench, home) / record.started.strftime("%Y%m%d-%H%M%S")
+    run = _Run(devbench, home, record)
     config.stash[_RUN] = run
     config.pluginmanager.register(run, "devbench-run")
 
@@ -214,8 +302,10 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
         if devbench.log is not None:
             log = devbench.log
             run.mark = _setup_step(f"marking {log}", lambda: LogMark(bench, log))
+        run.game = bench
         yield bench
     finally:
+        run.game = None
         if backup is not None:
             try:
                 written, deleted = backup.restore()
@@ -253,7 +343,34 @@ def log_mark(game: Devbench, pytestconfig: pytest.Config) -> LogMark:
     return mark
 
 
-@pytest.fixture(scope="session")
-def report(pytestconfig: pytest.Config) -> Record:
-    """The run's record, which a test adds notes to."""
+@pytest.fixture(autouse=True)
+def devbench_test_mark(request: pytest.FixtureRequest) -> None:
+    """
+    For a test that uses the game fixture, with Config.log set: a mark in the log as the test starts, which a failure's
+    log tail reads from. A mark that cannot be taken leaves the failure without a tail.
+    """
+    run = _run(request.config)
+    run.test_mark = None
+    log = run.config.log
+    if log is None or "game" not in request.fixturenames:
+        return
+    game = request.getfixturevalue("game")
+    try:
+        run.test_mark = (request.node.nodeid, LogMark(game, log))
+    except (DevbenchError, OSError):
+        pass
+
+
+# named so the package's report attribute stays the devbench.testing.report module
+@pytest.fixture(scope="session", name="report")
+def report_fixture(pytestconfig: pytest.Config) -> Record:
+    """The run's record, which a test adds notes, sections and pictures to."""
     return _run(pytestconfig).record
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: pytest.Config) -> None:
+    """Write the report and print its link, unless the run collected only, restored, or has no result."""
+    run = config.stash.get(_RUN, None)
+    if run is None or config.getoption("collectonly") or config.getoption("--e2e-restore") or not run.record.results:
+        return
+    terminalreporter.write_line(f"Report: {write(run.record).as_uri()}", bold=True)
