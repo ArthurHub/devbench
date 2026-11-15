@@ -6,6 +6,7 @@ Importing the package never imports pytest; the opt-in pytest plugin lives in de
 from importlib.metadata import PackageNotFoundError, version
 
 from devbench.client import Devbench, DevbenchError, ModTool, find_port
+from devbench.events import Events
 from devbench.waits import wait_until
 
 try:
@@ -13,4 +14,4 @@ try:
 except PackageNotFoundError:  # a source tree on sys.path that was never installed
     __version__ = "0.0.0"
 
-__all__ = ["Devbench", "DevbenchError", "ModTool", "__version__", "find_port", "wait_until"]
+__all__ = ["Devbench", "DevbenchError", "Events", "ModTool", "__version__", "find_port", "wait_until"]

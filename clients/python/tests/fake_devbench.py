@@ -37,6 +37,14 @@ class FakeDevbench:
         self._thread = threading.Thread(target=self._server.serve_forever, args=(0.02,), daemon=True)
         self._thread.start()
 
+    def publish(self, topic: str, data: Any = None) -> dict[str, Any]:
+        """Append an event with the next seq after the last one, as devbench's EventBus does, and return it."""
+        with self._lock:
+            seq = self.events[-1]["seq"] + 1 if self.events else 1
+            event = {"seq": seq, "frame": 0, "topic": topic, "data": data}
+            self.events.append(event)
+            return event
+
     def drop_next(self) -> None:
         """Close the kept-alive socket right after the next answer, without telling the client."""
         with self._lock:
@@ -81,7 +89,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(self.fake.health)
         elif url.path == "/api/events":
             since = int(parse_qs(url.query).get("since", ["0"])[0])
-            events = self.fake.events
+            with self.fake._lock:
+                events = list(self.fake.events)
             head = events[-1]["seq"] if events else 0
             self._answer({"headSeq": head, "events": [event for event in events if event["seq"] > since]})
         else:

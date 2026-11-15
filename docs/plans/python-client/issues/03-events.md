@@ -1,6 +1,6 @@
 # 03 Events
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 Spec: [../spec.md](../spec.md). Source: `Events`, `head_seq`, `events_since` in the flashlight suite's `devbench.py`.

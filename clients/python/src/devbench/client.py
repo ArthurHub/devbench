@@ -23,6 +23,9 @@ DEFAULT_PORTS = {
     ("fallout4", True): 8931,
 }
 
+# a since past any seq (devbench parses it as uint64): the events answer then carries headSeq and no events
+_SEQ_END = 2**64 - 1
+
 
 class DevbenchError(Exception):
     """
@@ -145,6 +148,31 @@ class Devbench:
         if status != 200:
             raise DevbenchError(f"health: HTTP {status} {answer}", status=status, answer=answer)
         return answer
+
+    def _events(self, since: int) -> tuple[int, list[dict[str, Any]]]:
+        """
+        One read of devbench's recent event ring (GET /api/events): the head seq and the events after since, oldest
+        first. A non-200 status or an answer without headSeq and events raises DevbenchError.
+        """
+        status, raw = self._request("GET", f"/api/events?since={since}")
+        answer = _decode(status, raw, "events", None)
+        if status != 200 or not isinstance(answer, dict) or "headSeq" not in answer or "events" not in answer:
+            raise DevbenchError(f"events: HTTP {status} {answer}", status=status, answer=answer)
+        return int(answer["headSeq"]), answer["events"]
+
+    def head_seq(self) -> int:
+        """
+        The seq of the last event devbench published. It asks past the end of the ring, so no events come back with
+        it.
+        """
+        return self._events(_SEQ_END)[0]
+
+    def events_since(self, seq: int) -> list[dict[str, Any]]:
+        """
+        The events published after seq that the ring still holds, oldest first, each with its seq, frame, topic and
+        data. The ring keeps the last 256 events; devbench.events.Events notices when some were lost.
+        """
+        return self._events(seq)[1]
 
 
 class ModTool:

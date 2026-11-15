@@ -28,6 +28,22 @@ with Devbench(find_port("fallout4", vr=True)) as bench:
     print(ModTool(bench, "immersiveflashlightvr").health())
 ```
 
+Read what an action caused from devbench's events. `Events` sees only events published after it was made; with a
+prefix (a mod's tool name) a topic also matches as `<prefix>.<topic>`:
+
+```python
+from devbench import Events
+
+mod = ModTool(bench, "immersiveflashlightvr")
+events = Events(bench, prefix=mod.prefix)
+mod.call("gesture", gesture="toggle")
+event = events.wait("gesture", timeout=3.0, where=lambda data: data["gesture"] == "toggle")
+print(len(events.all("gesture")), event["seq"])
+```
+
+`wait` raises `TimeoutError` naming the topic and the topics that arrived. A read raises `DevbenchError` when events
+were lost (more than the 256-event ring between two reads) or the game restarted.
+
 ## Develop
 
 ```
