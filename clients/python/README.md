@@ -132,10 +132,24 @@ if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
         hands.pose(hands={"right": {"node": "LArm_Hand", "front": 10}})  # any other pose arguments
 ```
 
-Hands are physical (`left` / `right`); a mod maps its own primary / offhand. `pitch` and `yaw` pass through as the
+A hand is a physical controller (`left` / `right`) or a role (`primary` / `offhand`), which devbench resolves against
+the game's handedness when the call arrives; any other name raises `ValueError`. `pitch` and `yaw` pass through as the
 `input` tool takes them. `TAP_MS` (100) and `LONG_PRESS_MS` (1000) are F4VR-CommonFramework's gesture thresholds.
 A press without a hold of this owner (it never started, or the hold ran out) raises `DevbenchError` (409). `stop`
 ignores a refused stop, and on an exception inside the `with` it never hides that exception.
+
+Read and set the game's handedness (`bLeftHandedMode:VR` on Fallout 4 VR):
+
+```python
+from devbench.vr import left_handed, set_left_handed
+
+was = set_left_handed(bench, True)  # the value before; answers once the game's wands have swapped
+assert left_handed(bench)
+set_left_handed(bench, was, owner="mymod-e2e")  # under that owner's pose hold, when it runs one
+```
+
+devbench checks the swap under the pose hold of `owner` when it runs one, else under a short hold of its own. Another
+sequence holding the devices (409) or a game that did not follow (504, the old value put back) raise `DevbenchError`.
 
 Put Fallout 4 (or VR) in a test cell, so nothing a run does reaches a save:
 

@@ -1,7 +1,8 @@
 """VR hands through devbench's input tool: a held pose of the HMD and both controllers, hands placed at world points,
-presses on top of the hold. The game's input handling sees all of it as the real devices.
+presses on top of the hold, and the game's handedness. The game's input handling sees all of it as the real devices.
 
-Hands are the physical controllers (left / right); mapping a mod's logical hand (primary / offhand) stays in the mod.
+A hand is a physical controller (left / right) or a role (primary / offhand), which devbench resolves against the game's
+handedness when the call arrives.
 """
 
 from __future__ import annotations
@@ -21,7 +22,29 @@ LONG_PRESS_MS = 1000
 # extra wait after a press's duration so its release has reached the game when press returns
 _RELEASE_MARGIN = 0.1
 
-_HANDS = ("left", "right")
+_HANDS = ("left", "right", "primary", "offhand")
+
+
+def _check_hand(hand: str) -> None:
+    if hand not in _HANDS:
+        raise ValueError(f"hand must be one of {', '.join(_HANDS)}, not {hand!r}")
+
+
+def left_handed(bench: Devbench) -> bool:
+    """Whether the game is left-handed: the left controller is the primary hand (bLeftHandedMode:VR on FO4VR)."""
+    return bool(bench.tool("input", action="handedness")["leftHanded"])
+
+
+def set_left_handed(bench: Devbench, value: bool, *, owner: str | None = None) -> bool:
+    """
+    Set the game's handedness and return the value before. devbench answers once the game's wands have swapped
+    controllers, under the pose hold of owner when it runs one, else a short hold of its own; it raises DevbenchError
+    when another sequence holds the devices (409) or the game did not follow (504, the old value put back).
+    """
+    args: dict[str, Any] = {"action": "handedness", "leftHanded": bool(value)}
+    if owner is not None:
+        args["owner"] = owner
+    return bool(bench.tool("input", **args)["was"])
 
 
 class Hands:
@@ -106,12 +129,11 @@ class Hands:
         move_ms: int | None = None,
     ) -> dict[str, Any]:
         """
-        Move a physical hand's wand (left / right) to a world point; the other hand stays. pitch / yaw (degrees) point
-        the controller, passed as devbench takes them; corrections, tolerance (world units) and move_ms tune the move.
-        Returns devbench's answer: corrections made, and per hand where the wand landed and its error.
+        Move a hand's wand (left / right / primary / offhand) to a world point; the other hand stays. pitch / yaw
+        (degrees) point the controller, passed as devbench takes them; corrections, tolerance (world units) and move_ms
+        tune the move. Returns devbench's answer: corrections made, and per hand where the wand landed and its error.
         """
-        if hand not in _HANDS:
-            raise ValueError(f"hand must be 'left' or 'right', not {hand!r}")
+        _check_hand(hand)
         target: dict[str, Any] = {"world": [float(c) for c in world]}
         if pitch is not None:
             target["pitch"] = pitch
@@ -129,9 +151,11 @@ class Hands:
 
     def press(self, hand: str, buttons: Sequence[str] = ("trigger",), duration_ms: int = TAP_MS) -> None:
         """
-        Hold buttons (trigger, grip, a, b, thumbstick) on a physical controller for duration_ms on top of the hold,
-        and return once they are released. Without a hold of this owner devbench answers 409 (DevbenchError).
+        Hold buttons (trigger, grip, a, b, thumbstick) on a hand (left / right / primary / offhand) for duration_ms on
+        top of the hold, and return once they are released. Without a hold of this owner devbench answers 409
+        (DevbenchError).
         """
+        _check_hand(hand)
         self.bench.tool(
             "input", action="press", owner=self.owner, hand=hand, buttons=list(buttons), durationMs=duration_ms
         )

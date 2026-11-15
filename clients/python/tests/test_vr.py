@@ -1,4 +1,7 @@
-"""VR hands: the token kept and passed to stop, stop on an exception, a refused stop, the pose arguments, presses."""
+"""
+VR hands: the token kept and passed to stop, stop on an exception, a refused stop, the pose arguments, presses, the hand
+names, and the handedness getter and setter.
+"""
 
 import pytest
 
@@ -14,6 +17,7 @@ class _Input:
         self.token = "t1"
         self.refuse = set()
         self.tracked = {"available": True, "ready": True}
+        self.left_handed = False
 
     def __call__(self, args):
         self.calls.append(args)
@@ -22,6 +26,11 @@ class _Input:
             return 409, {"ok": False, "error": f"{action} refused"}
         if action == "capabilities":
             return {"capabilities": {"vrTrackedSet": self.tracked}}
+        if action == "handedness":
+            if "leftHanded" not in args:
+                return {"leftHanded": self.left_handed}
+            was, self.left_handed = self.left_handed, args["leftHanded"]
+            return {"leftHanded": self.left_handed, "was": was, "changed": was != self.left_handed, "elapsedMs": 200}
         if action == "pose":
             return {"controlToken": self.token, "fresh": True, "corrections": 1}
         return {"ok": True}
@@ -147,11 +156,27 @@ def test_place_leaves_out_what_is_not_given(bench, tool):
     assert tool.calls[-1] == {"action": "pose", "owner": "e2e", "hands": {"left": {"world": [0.0, 0.0, 0.0]}}}
 
 
-def test_place_rejects_a_logical_hand(bench, tool):
-    with pytest.raises(ValueError, match="offhand"):
-        Hands(bench, "e2e").place("offhand", [0, 0, 0])
+def test_place_and_press_pass_a_role_through(bench, tool, slept):
+    hands = Hands(bench, "e2e")
+
+    hands.place("primary", [0, 0, 0])
+    hands.tap("offhand")
+
+    assert list(tool.calls[0]["hands"]) == ["primary"]
+    assert tool.calls[1]["hand"] == "offhand"
+
+
+@pytest.mark.parametrize("hand", ["primaryHand", "Left", ""])
+def test_place_and_press_reject_an_unknown_hand(bench, tool, slept, hand):
+    hands = Hands(bench, "e2e")
+
+    with pytest.raises(ValueError, match="left, right, primary, offhand"):
+        hands.place(hand, [0, 0, 0])
+    with pytest.raises(ValueError, match="left, right, primary, offhand"):
+        hands.press(hand)
 
     assert tool.calls == []
+    assert slept == []
 
 
 def test_head_sends_a_preset_or_a_pose(bench, tool):
@@ -195,3 +220,29 @@ def test_a_press_without_a_hold_raises_devbench_error(bench, tool, slept):
         Hands(bench, "e2e").press("left")
 
     assert slept == []
+
+
+def test_left_handed_reads_the_handedness(bench, tool):
+    tool.left_handed = True
+
+    assert devbench.vr.left_handed(bench) is True
+    assert tool.calls == [{"action": "handedness"}]
+
+
+def test_set_left_handed_returns_the_value_before(bench, tool):
+    assert devbench.vr.set_left_handed(bench, True) is False
+    assert devbench.vr.set_left_handed(bench, False, owner="e2e") is True
+
+    assert tool.calls == [
+        {"action": "handedness", "leftHanded": True},
+        {"action": "handedness", "leftHanded": False, "owner": "e2e"},
+    ]
+
+
+def test_a_set_the_game_did_not_follow_raises_devbench_error(bench, tool):
+    tool.refuse.add("handedness")
+
+    with pytest.raises(DevbenchError, match="handedness refused") as raised:
+        devbench.vr.set_left_handed(bench, True)
+
+    assert raised.value.status == 409
