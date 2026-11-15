@@ -47,6 +47,16 @@ repos:
         types_or: [yaml, markdown, json, ts, javascript]
         exclude: ^(default_recordings/|bridge/dist/)
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      # Only the client package; the Skyrim suite in tests/http/ is upstream's and stays as is.
+      - id: ruff-check
+        args: [--fix]
+        files: ^clients/python/
+      - id: ruff-format
+        files: ^clients/python/
+
   - repo: local
     hooks:
       # Type-aware linting needs the project's own node_modules/tsconfig, not an

@@ -1,6 +1,6 @@
 # 01 Python formatter and linter
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Comes first so every later ticket lands formatted and lint-clean.
