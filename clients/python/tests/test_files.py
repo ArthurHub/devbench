@@ -1,10 +1,9 @@
 """Files and backup: the files tool's actions, and a backup that puts back exactly what a run changed."""
 
-import base64
 import json
-from fnmatch import fnmatchcase
 
 import pytest
+from fake_devbench import FakeFiles
 
 from devbench import (
     Backup,
@@ -16,66 +15,6 @@ from devbench import (
     write_bytes,
     write_text,
 )
-
-
-def _glob_match(pattern, segments):
-    """Whether path segments match glob segments: '*' and '?' within a name, '**' for any folders, case ignored."""
-    if not pattern:
-        return not segments
-    if pattern[0] == "**":
-        return any(_glob_match(pattern[1:], segments[i:]) for i in range(len(segments) + 1))
-    return (
-        bool(segments)
-        and fnmatchcase(segments[0].lower(), pattern[0].lower())
-        and _glob_match(pattern[1:], segments[1:])
-    )
-
-
-class FakeFiles:
-    """
-    A scripted files tool over an in-memory file set: files maps (root, path) to bytes. writes and deletes record the
-    paths each changed; listing sets the flags a listing that is not whole carries.
-    """
-
-    def __init__(self, files=None):
-        self.files = dict(files or {})
-        self.writes = []
-        self.deletes = []
-        self.listing = {}
-
-    def _find(self, root, path):
-        """The stored key of a path, case ignored, or None."""
-        wanted = (root, path.lower())
-        return next((key for key in self.files if (key[0], key[1].lower()) == wanted), None)
-
-    def __call__(self, args):
-        action, root, path = args["action"], args["root"], args["path"]
-        if action == "list":
-            pattern = path.split("/")
-            listed = [
-                {"path": p, "bytes": len(data), "modifiedMs": 0}
-                for (r, p), data in sorted(self.files.items())
-                if r == root and _glob_match(pattern, p.split("/"))
-            ]
-            return {"ok": True, "count": len(listed), "files": listed, **self.listing}
-        key = self._find(root, path)
-        if action == "read":
-            if key is None:
-                return (404, {"ok": False, "error": f"files: no file '{path}' under {root}"})
-            assert args["encoding"] == "base64"
-            return {"ok": True, "path": path, "content": base64.b64encode(self.files[key]).decode("ascii")}
-        if action == "write":
-            assert args["encoding"] == "base64"
-            self.files[key or (root, path)] = base64.b64decode(args["content"])
-            self.writes.append(f"{root}/{path}")
-            return {"ok": True, "created": key is None}
-        if action == "delete":
-            if key is None:
-                return {"ok": True, "deleted": False}
-            del self.files[key]
-            self.deletes.append(f"{root}/{path}")
-            return {"ok": True, "deleted": True}
-        raise AssertionError(f"unexpected files action {action}")
 
 
 @pytest.fixture

@@ -154,6 +154,63 @@ first button, and gives up after `limit` seconds with `quiet` False. A game alre
 that a modal blocked raises `DevbenchError`. The cell is an interior cell's editor ID; an unknown one raises
 `DevbenchError`. Nothing is printed: `dialogs` holds what each closed box said.
 
+## pytest plugin
+
+`devbench.testing` runs a mod's end-to-end suite in the game: it connects, enters a game in the test cell, checks the
+mod, backs up the files a run changes and puts them back after. It is opt-in (no entry point), so it never loads into
+an unrelated pytest run. The mod's **rootdir** conftest (the one beside its `pytest.ini`; pytest honors
+`pytest_plugins` nowhere else) turns it on and configures it:
+
+```python
+import devbench.testing
+
+pytest_plugins = ["devbench.testing"]
+DEVBENCH = devbench.testing.Config(
+    game="fallout4",
+    vr=True,
+    tool="immersiveflashlightvr",  # the mod's devbench tool; None skips the mod check
+    actions=["gesture", "zones", "light"],  # the actions the tests call
+    version=lambda: read_checkout_version(),  # a string or a callable; None skips the version check
+    backup=[("mygames", "Mods_Config/ImmersiveFlashlightVR/*")],  # (root, glob) pairs; none: no backup
+    log="ImmersiveFlashlightVR.log",  # for the log_mark fixture
+    areas={"test_light.py": "Light action", "test_health.py": "Health"},  # run order, by test-file name
+    title="Immersive Flashlight VR",
+    cell="QASmoke",  # the interior cell the game runs in
+)
+```
+
+Fixtures:
+
+| Fixture              | Gives                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `bench` (session)    | the `Devbench`, checked to be the configured game and VR; connects only when a test needs it                |
+| `game` (session)     | the `Devbench`, once the game is set up (below); the backup is put back at the end, also when the run fails |
+| `mod` (session)      | `ModTool` of `tool`                                                                                         |
+| `events`             | `Events` from the start of the test, with the mod's tool as prefix                                          |
+| `log_mark` (session) | the `LogMark` in `log`, set just before the first test                                                      |
+| `report` (session)   | the run's record: `note(text)`, `dialogs` closed, `results` per test (area, outcome, phase, message)        |
+
+`game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
+`require_actions`, then `require_version`), takes the backup into `.backup/` beside the conftest, and sets the log mark.
+A setup failure (another game, a missing action, another build, a game outside the cell) exits the run with code 2 and
+the message that says what to do.
+
+Tests run in `areas` order; files it does not list run last. `--devbench-port` picks the port (default: the game's
+`runtime.json`). `--e2e-restore` puts back a backup a run left and runs no test; a restore that fails at the end of a
+run keeps the backup for it.
+
+A mod's own session setup wraps `game`: a fixture of the same name in its conftest requests the plugin's. Its setup runs
+after the backup and the log mark, its teardown before the backup is put back:
+
+```python
+@pytest.fixture(scope="session")
+def game(game, report):
+    was_left_handed = set_left_handed(game, False)
+    report.note("Ran right-handed.")
+    yield game
+    set_left_handed(game, was_left_handed)
+```
+
 ## Develop
 
 ```

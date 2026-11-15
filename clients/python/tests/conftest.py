@@ -7,6 +7,9 @@ from fake_devbench import FakeDevbench
 
 from devbench import Devbench
 
+# the plugin's tests run inner pytest sessions
+pytest_plugins = ["pytester"]
+
 
 @pytest.fixture
 def fake() -> Iterator[FakeDevbench]:
