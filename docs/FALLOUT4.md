@@ -357,7 +357,7 @@ Drives the VR controllers and HMD so a test can exercise what reacts to hand pos
 buttons. The contract is Skyrim's `vrTrackedSet`, unchanged: one owner at a time, the whole
 tracked set (HMD, left, right) replaced in every frame, the real devices passed through
 whenever nothing is active. Terms (Wand, Tracked set, Sequence, Pose) are in
-[GLOSSARY.md](../GLOSSARY.md).
+[GLOSSARY.md](GLOSSARY.md).
 
 ```powershell
 $i = "http://127.0.0.1:8931/api/tool/input"
