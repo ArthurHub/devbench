@@ -59,6 +59,35 @@ close_menus(bench, ["PauseMenu"])  # a refused close is ignored
 A command that does not compile raises `DevbenchError`, and so does `console_number` when the output holds no number.
 `close_dialogs` returns what each box said and gives up after `limit` (20) answers.
 
+Read and write files as the game sees them, through devbench's `files` tool. `root` is `"data"` (the Data folder,
+mod manager's virtual files included) or `"mygames"` (Documents/My Games/<game>):
+
+```python
+from devbench import Backup, delete_file, list_files, read_bytes, read_text, write_bytes, write_text
+
+[f["path"] for f in list_files(bench, "data", "MCM/Settings/*.ini")]  # glob: '*', '?', '**'; case ignored
+read_text(bench, "data", "MCM/Settings/MyMod.ini")  # None when there is no file; UTF-8, else cp1252
+write_text(bench, "mygames", "Mods_Config/MyMod/MyMod.toml", "key = 1\n")
+read_bytes(bench, "data", "x.bin"), write_bytes(bench, "data", "x.bin", b"\x01"), delete_file(bench, "data", "x.bin")
+```
+
+A listing that is not whole (the walk failed partway, or more than 10000 files) raises `DevbenchError`.
+
+`Backup` saves the files of some globs before a run changes them and puts them back after:
+
+```python
+backup = Backup(bench, [("mygames", "Mods_Config/MyMod/*")], "tests/e2e/.backup")
+if backup.pending():  # a run that a crash ended
+    backup.restore()
+backup.take()  # the number of files saved
+...
+written, deleted = backup.restore()  # "root/path" lists
+```
+
+The manifest (`<folder>/manifest.json`) is written whole before `take` returns, so it survives a crash. `restore`
+writes back each file that differs, deletes each file the globs list that the manifest lacks (case ignored), then
+removes the manifest. `take` raises while a backup is pending; `restore` raises when none is.
+
 ## Develop
 
 ```

@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from devbench.client import Devbench, DevbenchError, ModTool, find_port
 from devbench.console import console, console_number
 from devbench.events import Events
+from devbench.files import Backup, delete_file, list_files, read_bytes, read_text, write_bytes, write_text
 from devbench.menus import close_dialogs, close_menus, open_menus
 from devbench.waits import wait_until
 
@@ -17,6 +18,7 @@ except PackageNotFoundError:  # a source tree on sys.path that was never install
     __version__ = "0.0.0"
 
 __all__ = [
+    "Backup",
     "Devbench",
     "DevbenchError",
     "Events",
@@ -26,7 +28,13 @@ __all__ = [
     "close_menus",
     "console",
     "console_number",
+    "delete_file",
     "find_port",
+    "list_files",
     "open_menus",
+    "read_bytes",
+    "read_text",
     "wait_until",
+    "write_bytes",
+    "write_text",
 ]
