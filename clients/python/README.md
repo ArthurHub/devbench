@@ -44,6 +44,21 @@ print(len(events.all("gesture")), event["seq"])
 `wait` raises `TimeoutError` naming the topic and the topics that arrived. A read raises `DevbenchError` when events
 were lost (more than the 256-event ring between two reads) or the game restarted.
 
+Run console commands and handle menus with free functions that take the client:
+
+```python
+from devbench import close_dialogs, close_menus, console, console_number, open_menus
+
+console(bench, "player.GetPos z")  # the lines it printed
+console_number(bench, "player.GetInCell QASmoke")  # 1.0: the number after its '>>'
+"HUDMenu" in open_menus(bench)
+said = close_dialogs(bench)  # answer each message box with its first button
+close_menus(bench, ["PauseMenu"])  # a refused close is ignored
+```
+
+A command that does not compile raises `DevbenchError`, and so does `console_number` when the output holds no number.
+`close_dialogs` returns what each box said and gives up after `limit` (20) answers.
+
 ## Develop
 
 ```

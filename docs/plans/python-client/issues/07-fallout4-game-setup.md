@@ -7,9 +7,9 @@ Spec: [../spec.md](../spec.md). Source: `_start_game`, `wait_for_game`, `_settle
 
 ## What
 
-`devbench.games.fallout4`: `in_cell(bench, cell)`, `enter_game(bench, cell="QASmoke")` (from the main menu: prime the
-console, `coc`, wait for the HUD up with no MainMenu or LoadingMenu, closing dialogs; already in that cell: reuse;
-another cell loaded: raise), `settle(bench, quiet=10, limit=120)`. Returns what it did and the dialogs it closed, so
+`devbench.games.fallout4`: `in_cell(bench, cell)`, `enter_game(bench, cell="QASmoke")` (from the main menu: `coc`,
+wait for the HUD up with no MainMenu or LoadingMenu, closing dialogs; already in that cell: reuse; another cell
+loaded: raise), `settle(bench, quiet=10, limit=120)`. Returns what it did and the dialogs it closed, so
 the plugin can report them; no printing or report coupling here.
 
 ## Acceptance
