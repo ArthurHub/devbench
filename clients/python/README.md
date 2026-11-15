@@ -101,6 +101,23 @@ The manifest (`<folder>/manifest.json`) is written whole before `take` returns, 
 writes back each file that differs, deletes each file the globs list that the manifest lacks (case ignored), then
 removes the manifest. `take` raises while a backup is pending; `restore` raises when none is.
 
+Put Fallout 4 (or VR) in a test cell, so nothing a run does reaches a save:
+
+```python
+from devbench.games import fallout4
+
+entered = fallout4.enter_game(bench)  # cell="QASmoke"; Entered(started, dialogs, quiet)
+fallout4.in_cell(bench, "QASmoke")  # False at the main menu
+fallout4.settle(bench, quiet=10, limit=120)  # Settled(dialogs, quiet)
+```
+
+From the main menu `enter_game` runs `coc <cell>`, waits up to `timeout` (300 s) for the HUD with no main menu or
+loading screen, then settles: it waits until no message box has popped up for `quiet` seconds, answering each with its
+first button, and gives up after `limit` seconds with `quiet` False. A game already in the cell is reused
+(`started` False, `quiet` None); a game in another cell, or a load in progress, raises `RequirementError`. A `coc`
+that a modal blocked raises `DevbenchError`. The cell is an interior cell's editor ID; an unknown one raises
+`DevbenchError`. Nothing is printed: `dialogs` holds what each closed box said.
+
 ## Develop
 
 ```
