@@ -24,13 +24,12 @@ HANG_UP = object()
 class FakeDevbench:
     """
     Answers /api/tool/<name> and the /api/tools listing from tools, /api/health from health and
-    /api/events?since=<seq> from events, on a free
-    port of 127.0.0.1 with HTTP/1.1 keep-alive. calls records each request as (method, path, body); connections
-    counts the TCP connections accepted. drop_next() closes the socket after the next answer, as a restarting game does;
-    stop() stops listening, as a game that quit.
+    /api/events?since=<seq> from events, on port of 127.0.0.1 (0: a free one) with HTTP/1.1 keep-alive. calls records
+    each request as (method, path, body); connections counts the TCP connections accepted. drop_next() closes the
+    socket after the next answer, as a restarting game does; stop() stops listening, as a game that quit.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, port: int = 0) -> None:
         self.tools: dict[str, ToolHandler] = {}
         self.health: Any = {"ok": True}
         self.events: list[dict[str, Any]] = []
@@ -40,7 +39,7 @@ class FakeDevbench:
         self._stopped = False
         self._lock = threading.Lock()
         handler = type("Handler", (_Handler,), {"fake": self})
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self._server = ThreadingHTTPServer(("127.0.0.1", port), handler)
         self._server.daemon_threads = True
         self.port: int = self._server.server_address[1]
         # a short poll so close() (shutdown) does not wait out the default 0.5 s per test

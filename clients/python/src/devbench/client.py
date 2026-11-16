@@ -85,7 +85,10 @@ def _decode(status: int, raw: bytes, what: str, tool: str | None) -> Any:
 
 
 class Devbench:
-    """A client of devbench's REST port on 127.0.0.1. Close it, or use it as a context manager."""
+    """
+    A client of devbench's REST port on 127.0.0.1. Close it, or use it as a context manager. timeout is each call's,
+    in seconds, and may be changed between calls.
+    """
 
     def __init__(self, port: int, timeout: float = 60.0) -> None:
         self.port = port
@@ -116,6 +119,10 @@ class Devbench:
                 self._connection = http.client.HTTPConnection(HOST, self.port, timeout=self.timeout)
             # http.client reopens by itself after a response that closed the socket; that send is not on a reused one
             reused = self._connection.sock is not None
+            if reused:
+                # timeout may have changed since the socket opened
+                self._connection.sock.settimeout(self.timeout)
+            self._connection.timeout = self.timeout
             try:
                 self._connection.request(method, path, body=payload, headers=headers)
                 response = self._connection.getresponse()

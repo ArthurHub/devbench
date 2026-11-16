@@ -3,7 +3,7 @@
 import pytest
 
 from devbench import DevbenchError, RequirementError
-from devbench.games.fallout4 import Entered, Settled, enter_game, in_cell, settle
+from devbench.games.fallout4 import Entered, Settled, at_main_menu_or_in_game, enter_game, in_cell, settle
 
 # a poll fast enough that a test waits milliseconds
 FAST = {"interval": 0.01}
@@ -190,3 +190,18 @@ def test_in_cell_reads_get_in_cell(fake, bench):
 
     assert in_cell(bench, "QASmoke")
     assert not in_cell(bench, "SanctuaryExt")
+
+
+@pytest.mark.parametrize(
+    "menus, ready",
+    [
+        (["MainMenu"], True),
+        (["HUDMenu"], True),
+        (["MainMenu", "LoadingMenu"], False),
+        (["HUDMenu", "LoadingMenu"], False),
+        (["LoadingMenu"], False),
+        ([], False),
+    ],
+)
+def test_at_main_menu_or_in_game(menus, ready):
+    assert at_main_menu_or_in_game(menus) is ready

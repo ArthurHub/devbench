@@ -12,7 +12,7 @@ from devbench.events import Events
 from devbench.files import Backup, delete_file, list_files, read_bytes, read_text, write_bytes, write_text
 from devbench.log import LogMark
 from devbench.menus import close_dialogs, close_menus, open_menus
-from devbench.process import quit_game, wait_gone
+from devbench.process import launch, quit_game, restart, wait_gone
 from devbench.vr import Hands
 from devbench.waits import wait_until
 
@@ -37,6 +37,7 @@ __all__ = [
     "console_number",
     "delete_file",
     "find_port",
+    "launch",
     "list_files",
     "open_menus",
     "quit_game",
@@ -46,6 +47,7 @@ __all__ = [
     "require_actions",
     "require_tools",
     "require_version",
+    "restart",
     "wait_gone",
     "wait_until",
     "write_bytes",

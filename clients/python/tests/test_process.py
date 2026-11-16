@@ -1,13 +1,23 @@
-"""Quitting the game: the quit tool or qqq, then waiting for the process or the port to go."""
+"""The game's process: quitting it (the quit tool or qqq, then waiting for the process or the port to go), and
+launching it with a fake game run as its own process."""
 
+import json
+import os
+import signal
+import socket
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 from fake_devbench import HANG_UP
 
-from devbench import DevbenchError, quit_game, wait_gone
+from devbench import DevbenchError, launch, open_menus, quit_game, restart, wait_gone
+from devbench import process as process_module
+
+# the fake game launch's tests run
+_FAKE_GAME = str(Path(__file__).resolve().parent / "fake_game.py")
 
 # the console tool's answer to a command that leaves the world: queued for a later frame, never captured
 _QUEUED = {"ok": True, "executed": True, "captured": False, "queued": True}
@@ -123,3 +133,128 @@ def test_wait_gone_with_a_gone_port_and_no_pid_returns(fake):
     fake.stop()
 
     wait_gone(fake.port, timeout=0)
+
+
+def _free_port():
+    """A port nothing listens on now."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class _Launching:
+    """
+    The place launch's tests run in: LOCALAPPDATA in a temporary folder, the runtime.json of each game naming a port
+    nothing listens on, and a pid file each fake game appends to; the fake games are killed after the test.
+    """
+
+    def __init__(self, folder):
+        self.folder = folder
+        self.pidfile = folder / "pids.txt"
+
+    def runtime(self, folder="fallout4vr"):
+        return self.folder / "devbench" / folder / "runtime.json"
+
+    def name_port(self, port, folder="fallout4vr"):
+        path = self.runtime(folder)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"port": port}), encoding="utf-8")
+
+    def game(self, *args):
+        """The command of a fake game with the given options."""
+        return [sys.executable, _FAKE_GAME, str(self.pidfile), *args]
+
+    def pids(self):
+        if not self.pidfile.exists():
+            return []
+        return [int(line) for line in self.pidfile.read_text(encoding="utf-8").split()]
+
+
+@pytest.fixture
+def launching(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(process_module, "_LAUNCH_INTERVAL", 0.05)
+    # a connect to a port nothing listens on waits out this timeout on Windows; the fakes accept at once
+    monkeypatch.setattr(process_module, "_CONNECT_TIMEOUT", 0.2)
+    place = _Launching(tmp_path)
+    for folder in ("fallout4vr", "fallout4", "vr"):
+        place.name_port(_free_port(), folder)
+    yield place
+    for pid in place.pids():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def test_launch_waits_for_devbench_and_the_main_menu(launching):
+    with launch(launching.game("--delay", "0.3", "--loading", "0.5"), "fallout4", True, timeout=20) as bench:
+        assert bench.health()["pid"] == launching.pids()[0]
+        assert open_menus(bench) == ["MainMenu"]
+        assert bench.timeout == 60.0
+
+
+def test_launch_accepts_a_launcher_that_hands_off(launching):
+    with launch(launching.game("--handoff", "--delay", "0.5"), "fallout4", True, timeout=20) as bench:
+        assert bench.health()["game"] == "fallout4"
+
+
+def test_launch_takes_a_command_line_string(launching):
+    command = subprocess.list2cmdline(launching.game()) if sys.platform == "win32" else " ".join(launching.game())
+    with launch(command, "fallout4", True, timeout=20) as bench:
+        assert bench.health()["vr"] is True
+
+
+def test_launch_waits_on_a_pinned_port(launching):
+    port = _free_port()
+    with launch(launching.game("--port", str(port)), "fallout4", True, timeout=20, port=port) as bench:
+        assert bench.port == port
+
+
+def test_launch_of_a_game_without_a_ready_check_returns_once_devbench_answers(launching):
+    with launch(launching.game("--game", "skyrim"), "skyrim", True, timeout=20) as bench:
+        assert bench.health()["game"] == "skyrim"
+
+
+def test_launch_times_out_when_nothing_listens(launching):
+    command = [sys.executable, "-c", "import sys; sys.exit(3)"]
+
+    with pytest.raises(DevbenchError, match=r"not up within 0.5 s: nothing listens on port \d+; .*exited with code 3"):
+        launch(command, "fallout4", True, timeout=0.5)
+
+
+def test_launch_times_out_at_a_game_that_is_not_ready(launching):
+    with pytest.raises(DevbenchError, match=r"not ready \(open menus: \['LoadingMenu'\]\); the launcher still runs"):
+        launch(launching.game("--loading", "60"), "fallout4", True, timeout=3)
+
+
+def test_launch_ignores_another_game_on_the_port(launching):
+    with pytest.raises(DevbenchError, match="answers as fallout4, not fallout4 VR"):
+        launch(launching.game("--health-vr", "0"), "fallout4", True, timeout=3)
+
+
+def test_launch_refuses_while_a_game_holds_the_port(launching, fake):
+    launching.name_port(fake.port)
+    marker = launching.folder / "launched"
+
+    with pytest.raises(DevbenchError, match=f"a game may already run: port {fake.port}"):
+        launch([sys.executable, "-c", f"open(r'{marker}', 'w')"], "fallout4", True, timeout=5)
+
+    assert not marker.exists()
+
+
+def test_launch_reports_a_command_that_cannot_start(launching):
+    with pytest.raises(DevbenchError, match="could not start"):
+        launch([str(launching.folder / "no-such-launcher.exe")], "fallout4", True, timeout=5)
+
+
+def test_restart_quits_then_launches(launching, fake, bench):
+    def quit_tool(args):
+        _later(0.1, fake.stop)
+        return {"ok": True, "quitting": True}
+
+    fake.tools["quit"] = quit_tool
+
+    with restart(bench, launching.game(), "fallout4", True, timeout=20) as again:
+        assert ("POST", "/api/tool/quit", {}) in fake.calls
+        assert again.health()["pid"] == launching.pids()[0]

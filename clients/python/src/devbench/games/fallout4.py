@@ -7,6 +7,7 @@ compile (DevbenchError). Nothing here prints: each call returns what it did and 
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from devbench.checks import RequirementError
@@ -40,6 +41,14 @@ class Entered:
     started: bool
     dialogs: list[str]
     quiet: bool | None
+
+
+def at_main_menu_or_in_game(menus: Sequence[str]) -> bool:
+    """
+    Whether a launched game is ready, from its open menus: the main menu up, or a game loaded (the HUD up) for a setup
+    that loads a save at start. Never while the loading screen shows.
+    """
+    return "LoadingMenu" not in menus and ("MainMenu" in menus or "HUDMenu" in menus)
 
 
 def _player_in(bench: Devbench, cell: str) -> bool:
