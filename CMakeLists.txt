@@ -54,7 +54,9 @@ add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 set(VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(VERSION_PATCH ${PROJECT_VERSION_PATCH})
-set(VERSION_STRING ${PROJECT_VERSION})
+include(cmake/fork-version.cmake)
+devbench_display_version(VERSION_STRING ${PROJECT_VERSION})
+message(STATUS "devbench version string: ${VERSION_STRING}")
 configure_file(
 	${CMAKE_CURRENT_SOURCE_DIR}/src/Version.h.in
 	${CMAKE_CURRENT_BINARY_DIR}/include/Version.h
