@@ -32,17 +32,12 @@ jobs:
         # Lowest supported (requires-python) and latest.
         python-version: ["3.10", "3.x"]
     steps:
-      # setuptools-scm reads the version from the repo's tags; a shallow clone has
-      # none and would fall back to 0.0.0.
+      # setuptools-scm reads the version from the fork's fo4-v* tags; a shallow clone
+      # has none and would fall back to 0.0.0.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      # The ArthurHub fork carries no release tags; they live on rollingrock/devbench.
-      # Fetch them so the version matches the upstream release the branch builds on.
-      - name: Fetch upstream release tags
-        run: git fetch --tags --no-recurse-submodules https://github.com/rollingrock/devbench.git
 
       - uses: actions/setup-python@v7
         with:

@@ -2,7 +2,7 @@
 # repo's git tag (setuptools-scm), so the package and the DLL share a number.
 
 [build-system]
-requires = ["setuptools>=77", "setuptools-scm>=8"]
+requires = ["setuptools>=77", "setuptools-scm>=9"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -23,6 +23,12 @@ devbench = ["py.typed"]
 root = "../.."
 # A checkout without tags (a shallow clone, a source zip) still installs.
 fallback_version = "0.0.0"
+
+[tool.setuptools_scm.scm.git]
+# The fork releases as fo4-vX.Y.Z; upstream's vX.Y.Z tags (in a clone that tracks upstream) never count. The default
+# tag regex strips the `fo4-` prefix. cmake/fork-version.cmake runs the same command, so the DLL's version string and
+# this package's match. This table needs setuptools-scm 9.
+describe_command = "git describe --dirty --tags --long --match fo4-v*"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
