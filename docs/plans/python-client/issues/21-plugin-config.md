@@ -1,6 +1,6 @@
 # 21 Plugin config
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Source: the flashlight suite's `pytest.ini` markers and `pytestmark` lines, its

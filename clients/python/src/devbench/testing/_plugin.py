@@ -15,7 +15,14 @@ from typing import Any, NoReturn
 import pytest
 
 from devbench import vr
-from devbench.checks import RequirementError, require, require_actions, require_tools, require_version
+from devbench.checks import (
+    RequirementError,
+    require,
+    require_actions,
+    require_min_version,
+    require_tools,
+    require_version,
+)
 from devbench.client import HOST, Devbench, DevbenchError, ModTool, find_port
 from devbench.events import Events
 from devbench.files import Backup, delete_file, read_bytes
@@ -23,10 +30,11 @@ from devbench.games import fallout4
 from devbench.log import LogMark
 from devbench.menus import message_box_text
 from devbench.process import launch, quit_game
-from devbench.testing._config import Config
+from devbench.testing._config import Config, Dependency
 from devbench.testing._picture import bmp_to_png
 from devbench.testing._record import Failure, Record
 from devbench.testing.report import write
+from devbench.waits import wait_until
 
 # what setup failures exit the session with
 _EXIT_CODE = 2
@@ -41,6 +49,9 @@ _CONNECT_TIMEOUT = 1.0
 # process outlasts it
 _QUIT_KILL_AFTER = 60.0
 _QUIT_TIMEOUT = 90.0
+
+# how often Config.ready is polled, in seconds
+_READY_INTERVAL = 0.1
 
 # the longest side of a failure's dump, in pixels: a third of FO4VR's 6144-wide frame, so each eye is 1024 wide
 _PICTURE_SIZE = 2048
@@ -120,6 +131,15 @@ class _Run:
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         self.record.add(report)
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_protocol(self, item: pytest.Item) -> Generator[None, object, object]:
+        """Keep the record's current_test on the test while it runs, its setup and teardown included."""
+        self.record.current_test = item.nodeid.partition("::")[2]
+        try:
+            return (yield)
+        finally:
+            self.record.current_test = None
 
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_makereport(
@@ -345,7 +365,9 @@ def pytest_configure(config: pytest.Config) -> None:
     devbench, home = _find_config(config)
     if config.getoption("--left-handed") and not devbench.vr:
         raise pytest.UsageError("devbench.testing: --left-handed needs a VR game (Config.vr)")
-    record = Record(areas=devbench.areas, title=devbench.title or devbench.tool or devbench.game)
+    for area in devbench.area_markers().values():
+        config.addinivalue_line("markers", f"{area.marker}: {area.title}")
+    record = Record(areas=devbench.area_titles(), title=devbench.title or devbench.tool or devbench.game)
     record.directory = _report_root(devbench, home) / record.started.strftime("%Y%m%d-%H%M%S")
     run = _Run(devbench, home, record)
     config.stash[_RUN] = run
@@ -386,9 +408,19 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     pytest.exit("; ".join(said), returncode=code)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Run the tests in the order of Config.areas (by test-file name); files it does not list run last."""
-    order = list(_run(config).config.areas)
+    """
+    Mark each test with its area's marker, and run the tests in the order of Config.areas (by test-file name); files
+    it does not list run last. It runs first, so pytest's -m sees the markers.
+    """
+    devbench = _run(config).config
+    markers = devbench.area_markers()
+    for item in items:
+        area = markers.get(item.path.name)
+        if area is not None and area.marker is not None:
+            item.add_marker(area.marker)
+    order = list(devbench.areas)
     if order:
         items.sort(key=lambda item: order.index(item.path.name) if item.path.name in order else len(order))
 
@@ -443,6 +475,19 @@ def _check_mod(bench: Devbench, devbench: Config, run: _Run) -> None:
         run.record.note(f"{devbench.title or devbench.tool} {health['version']}.")
 
 
+def _check_dependency(bench: Devbench, dependency: Dependency, run: _Run) -> None:
+    """Another mod's tool is listed, offers the actions the suite calls and runs at least its minimum version."""
+    mod = ModTool(bench, dependency.tool)
+    require_tools(bench, [dependency.tool])
+    health: dict[str, Any] = {}
+    if dependency.actions:
+        health = require_actions(mod, dependency.actions)
+    if dependency.min_version is not None:
+        health = require_min_version(mod, dependency.min_version)
+    if "version" in health:
+        run.record.note(f"{dependency.tool} {health['version']}.")
+
+
 @pytest.fixture(scope="session")
 def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
     """
@@ -473,6 +518,17 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
 
     if devbench.tool is not None:
         _setup_step(f"checking {devbench.tool}", lambda: _check_mod(bench, devbench, run))
+    for dependency in devbench.requires:
+        _setup_step(
+            f"checking {dependency.tool}", lambda dependency=dependency: _check_dependency(bench, dependency, run)
+        )
+    if devbench.ready is not None:
+        assert devbench.tool is not None  # Config checks that ready comes with tool
+        ready, mod = devbench.ready, ModTool(bench, devbench.tool)
+        _setup_step(
+            f"waiting for {mod.name} to be ready",
+            lambda: wait_until(lambda: ready(mod), devbench.ready_timeout, _READY_INTERVAL, f"{mod.name} ready"),
+        )
 
     if run.handedness_pending():
         value = _setup_step("putting back the handedness an earlier run left", lambda: run.restore_handedness(bench))

@@ -5,7 +5,14 @@ Importing the package never imports pytest; the opt-in pytest plugin lives in de
 
 from importlib.metadata import PackageNotFoundError, version
 
-from devbench.checks import RequirementError, require, require_actions, require_tools, require_version
+from devbench.checks import (
+    RequirementError,
+    require,
+    require_actions,
+    require_min_version,
+    require_tools,
+    require_version,
+)
 from devbench.client import Devbench, DevbenchError, ModTool, find_port
 from devbench.console import console, console_number
 from devbench.events import Events
@@ -46,6 +53,7 @@ __all__ = [
     "read_text",
     "require",
     "require_actions",
+    "require_min_version",
     "require_tools",
     "require_version",
     "restart",

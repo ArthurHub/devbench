@@ -92,7 +92,8 @@ class Record:
     """
     What a run found, as the plugin and the tests add it: notes, the dialogs closed, the results in run order, what
     failed tests left (failures by node id), the mod's sections and pictures. directory is the run's report folder;
-    folder creates it on first use.
+    folder creates it on first use. The plugin keeps current_test on the running test, from its setup to its
+    teardown, so a mod's helper can tag a row with it.
     """
 
     areas: Mapping[str, str] = field(default_factory=dict)
@@ -105,6 +106,8 @@ class Record:
     failures: dict[str, Failure] = field(default_factory=dict)
     sections: list[Section] = field(default_factory=list)
     pictures: list[Picture] = field(default_factory=list)
+    # the running test's name (what follows its file in the node id: "test_x[p]", "TestC::test_x"); None between tests
+    current_test: str | None = None
     _reserved: int = field(default=0, init=False, repr=False)
 
     @property

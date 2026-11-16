@@ -10,7 +10,7 @@ PYTEST_DONT_REWRITE: the conftest imports this package for Config before pytest 
 rewrite its asserts, which pytest would warn about on every run; they are not test asserts, so none is lost.
 """
 
-from devbench.testing._config import Config
+from devbench.testing._config import Area, Config, Dependency
 from devbench.testing._plugin import (
     bench,
     devbench_test_mark,
@@ -29,7 +29,9 @@ from devbench.testing._plugin import (
 from devbench.testing._record import Failure, Picture, Record, Result, Section
 
 __all__ = [
+    "Area",
     "Config",
+    "Dependency",
     "Failure",
     "Picture",
     "Record",

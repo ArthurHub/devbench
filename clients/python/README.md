@@ -229,7 +229,13 @@ DEVBENCH = devbench.testing.Config(
     version=lambda: read_checkout_version(),  # a string or a callable; None skips the version check
     backup=[("mygames", "Mods_Config/ImmersiveFlashlightVR/*")],  # (root, glob) pairs; none: no backup
     log="ImmersiveFlashlightVR.log",  # for the log_mark fixture
-    areas={"test_light.py": "Light action", "test_health.py": "Health"},  # run order, by test-file name
+    areas={  # run order, by test-file name: a title, or an Area with its -m marker
+        "test_light.py": devbench.testing.Area("Light action", marker="light"),
+        "test_health.py": "Health",
+    },
+    requires=[devbench.testing.Dependency("frik", actions=["probe"], min_version="0.79")],  # other mods' tools
+    ready=lambda mod: mod.call("state")["ready"],  # polled on the mod's tool before the first test
+    ready_timeout=30.0,
     title="Immersive Flashlight VR",
     cell="QASmoke",  # the interior cell the game runs in
     picture=6,  # the render target dumped when a test fails (FO4VR: 6, the lit frame); None: no picture
@@ -251,12 +257,16 @@ Fixtures:
 | `report` (session)      | the run's record, which the HTML report renders (below)                                                     |
 
 `game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
-`require_actions`, then `require_version`), puts back a handedness a crashed run left, takes the backup into `.backup/`
-beside the conftest, sets the run's handedness, and sets the log mark.
-A setup failure (another game, a missing action, another build, a game outside the cell) exits the run with code 2 and
-the message that says what to do.
+`require_actions`, then `require_version`) and each of `requires` (`require_tools`, its `actions`, then
+`require_min_version`, which compares dotted numbers: `0.79.2-beta` is 0.79.2), polls `ready` with the mod's `ModTool`
+until it returns a true value, puts back a handedness a crashed run left, takes the backup into `.backup/` beside the
+conftest, sets the run's handedness, and sets the log mark. The report notes each version it checked.
+A setup failure (another game, a missing tool or action, another build, a required mod too old, a mod not ready
+within `ready_timeout`, a game outside the cell) exits the run with code 2 and the message that says what to do.
 
-Tests run in `areas` order; files it does not list run last. `--devbench-port` picks the port (default: the game's
+Tests run in `areas` order; files it does not list run last. An `Area`'s marker is registered (it passes
+`--strict-markers` and shows in `--markers`) and put on every test of its file, so `pytest -m light` runs that area
+with no `pytest.ini` marker list and no `pytestmark` line. `--devbench-port` picks the port (default: the game's
 `runtime.json`). `--e2e-restore` puts back a backup a run left and runs no test; a restore that fails at the end of a
 run keeps the backup for it.
 
@@ -318,6 +328,9 @@ def test_reach(game, report, request):
     path = report.picture(request.node.nodeid, label="the panel")  # a file for the mod to write, shown if it does
     (report.folder / "perf.json").write_text("{}")  # a file beside the page
 ```
+
+`report.current_test` is the running test's name (`test_reach[left]`, `TestGroup::test_reach`) from its setup to its
+teardown, and None between tests, so a mod's helper can tag a row with it without a `request`.
 
 Sections show after the areas, in the order first added; a section is a table or HTML, and a call of the other shape,
 other columns or a row of another length raises `ValueError`. `devbench.testing.report.render(record)` renders a

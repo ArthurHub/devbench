@@ -9,6 +9,7 @@ from devbench import (
     RequirementError,
     require,
     require_actions,
+    require_min_version,
     require_tools,
     require_version,
 )
@@ -138,3 +139,25 @@ def test_require_version_without_a_version(fake, bench):
 
     with pytest.raises(RequirementError, match="answers health without version"):
         require_version(mod, "1.3.0")
+
+
+@pytest.mark.parametrize("running", ["0.79", "0.79.0", "0.80.1", "1.0", "0.79.2-beta"])
+def test_require_min_version_passes_at_or_above(fake, bench, running):
+    mod = mod_health(fake, bench, version=running)
+
+    assert require_min_version(mod, "0.79")["version"] == running
+
+
+@pytest.mark.parametrize("running", ["0.78.9", "0.9", "0.7"])
+def test_require_min_version_below(fake, bench, running):
+    mod = mod_health(fake, bench, version=running)
+
+    with pytest.raises(RequirementError, match=f"the game runs {MOD} {running}, this run needs 0.79 or later"):
+        require_min_version(mod, "0.79")
+
+
+def test_require_min_version_that_is_not_a_version(fake, bench):
+    mod = mod_health(fake, bench, version="dev")
+
+    with pytest.raises(RequirementError, match=f"{MOD} reports version 'dev', not a dotted number"):
+        require_min_version(mod, "0.79")

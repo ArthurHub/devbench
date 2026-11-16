@@ -10,7 +10,7 @@ import pytest
 from fake_devbench import FakeFiles, make_bmp, read_png
 
 from devbench import Backup
-from devbench.testing import Config
+from devbench.testing import Area, Config, Dependency
 
 MOD_FILE = ("mygames", "Mods_Config/MyMod/MyMod.toml")
 
@@ -284,6 +284,207 @@ def test_areas_order_the_tests_without_touching_the_game(pytester, fake):
     ]
     assert [r.area for r in _record(reprec).results][::2] == ["C", "A", "test_b.py"]
     assert fake.calls == []
+
+
+def test_an_areas_marker_selects_its_files_tests(pytester, fake):
+    pytester.makeconftest(
+        """
+        import devbench.testing
+
+        pytest_plugins = ["devbench.testing"]
+        DEVBENCH = devbench.testing.Config(
+            game="fallout4",
+            vr=True,
+            areas={
+                "test_light.py": devbench.testing.Area("Light action", marker="light"),
+                "test_gestures.py": devbench.testing.Area("Gestures", marker="gestures"),
+                "test_plain.py": "Plain",
+            },
+        )
+        """
+    )
+    # not test_menus: the outer suite's module of that name is imported already
+    for name in ("light", "gestures", "plain"):
+        pytester.makepyfile(**{f"test_{name}": "def test_one(): pass\ndef test_two(): pass"})
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port), "--strict-markers", "-m", "light")
+
+    reprec.assertoutcome(passed=2)
+    record = _record(reprec)
+    assert [(r.nodeid, r.area) for r in record.results] == [
+        ("test_light.py::test_one", "Light action"),
+        ("test_light.py::test_two", "Light action"),
+    ]
+    assert len(reprec.getcall("pytest_deselected").items) == 4
+
+
+def test_area_markers_are_registered(pytester, fake):
+    pytester.makeconftest(
+        """
+        import devbench.testing
+
+        pytest_plugins = ["devbench.testing"]
+        DEVBENCH = devbench.testing.Config(
+            game="fallout4", vr=True, areas={"test_light.py": devbench.testing.Area("Light action", marker="light")}
+        )
+        """
+    )
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--markers")
+
+    result.stdout.fnmatch_lines(["@pytest.mark.light: Light action"])
+
+
+def test_area_rejects_a_marker_that_is_not_a_name():
+    with pytest.raises(ValueError, match="'light action' is not a marker name"):
+        Area("Light action", marker="light action")
+
+
+REQUIRES_CONFTEST = """
+import devbench.testing
+
+pytest_plugins = ["devbench.testing"]
+DEVBENCH = devbench.testing.Config(
+    game="fallout4",
+    vr=True,
+    tool="mymod",
+    requires=[devbench.testing.Dependency("frik", actions=["grip"], min_version="0.79")],
+)
+"""
+
+
+def _frik(fake, version="0.80.1", actions=("health", "grip")):
+    fake.tools["frik"] = lambda args: {"ok": True, "version": version, "actions": list(actions)}
+
+
+def test_a_required_tool_is_checked_and_noted(pytester, fake, game):
+    _frik(fake)
+    pytester.makeconftest(REQUIRES_CONFTEST)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=1)
+    assert "frik 0.80.1." in _record(reprec).notes
+
+
+@pytest.mark.parametrize(
+    ("frik", "said"),
+    [
+        (None, "*devbench lacks tools frik: deploy the mods that register them*"),
+        ({"actions": ["health"]}, "*frik lacks actions grip: deploy this build*"),
+        ({"version": "0.78.2"}, "*the game runs frik 0.78.2, this run needs 0.79 or later: deploy a newer build*"),
+    ],
+)
+def test_a_missing_requirement_exits_with_what_is_missing(pytester, fake, game, frik, said):
+    if frik is not None:
+        _frik(fake, **frik)
+    pytester.makeconftest(REQUIRES_CONFTEST)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    assert result.ret == 2
+    result.stdout.fnmatch_lines([said])
+    result.assert_outcomes()
+
+
+READY_CONFTEST = """
+import devbench.testing
+
+pytest_plugins = ["devbench.testing"]
+DEVBENCH = devbench.testing.Config(
+    game="fallout4",
+    vr=True,
+    tool="mymod",
+    ready=lambda mod: mod.call("state")["ready"],
+    ready_timeout=0.5,
+)
+"""
+
+
+def _mod_ready_after(fake, game, states):
+    """The mod's state action answers ready after `states` calls; the other actions are FakeGame's."""
+    calls = []
+    answer = fake.tools["mymod"]
+
+    def mod(args):
+        if args["action"] != "state":
+            return answer(args)
+        calls.append(args)
+        return {"ok": True, "ready": len(calls) > states}
+
+    fake.tools["mymod"] = mod
+    return calls
+
+
+def test_the_run_waits_for_the_mod_to_be_ready(pytester, fake, game):
+    calls = _mod_ready_after(fake, game, states=2)
+    pytester.makeconftest(READY_CONFTEST)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=1)
+    assert len(calls) == 3
+
+
+def test_a_mod_never_ready_exits(pytester, fake, game):
+    _mod_ready_after(fake, game, states=10**6)
+    pytester.makeconftest(READY_CONFTEST)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    assert result.ret == 2
+    result.stdout.fnmatch_lines(["*waiting for mymod to be ready: mymod ready did not hold within 0.5 s*"])
+    result.assert_outcomes()
+
+
+def test_dependency_rejects_a_min_version_that_is_not_a_number():
+    with pytest.raises(ValueError, match="min_version 'latest' of frik is not a dotted number"):
+        Dependency("frik", min_version="latest")
+
+
+def test_config_ready_needs_the_tool():
+    with pytest.raises(ValueError, match="ready needs tool"):
+        Config(game="fallout4", vr=True, ready=lambda mod: True)
+
+
+def test_a_row_added_in_a_test_carries_its_name(pytester, fake):
+    _conftest(pytester)
+    pytester.makepyfile(
+        helper="""
+        def place(report, what):
+            report.section("Placements", columns=["Test", "What"], rows=[[report.current_test, what]])
+        """,
+        test_light="""
+        import pytest
+        from helper import place
+
+        def test_one(report):
+            place(report, "left")
+
+        @pytest.mark.parametrize("hand", ["right"])
+        def test_two(report, hand):
+            place(report, hand)
+
+        class TestGroup:
+            def test_three(self, report):
+                place(report, "both")
+        """,
+    )
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(passed=3)
+    record = _record(reprec)
+    assert record.sections[0].rows == [
+        ("test_one", "left"),
+        ("test_two[right]", "right"),
+        ("TestGroup::test_three", "both"),
+    ]
+    assert record.current_test is None
 
 
 def test_a_conftest_without_devbench_is_a_usage_error(pytester):

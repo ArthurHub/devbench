@@ -5,6 +5,7 @@ Each failure raises RequirementError with a message that says what was found and
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -17,6 +18,10 @@ _GAME_NAMES = {
     ("fallout4", False): "Fallout 4",
     ("fallout4", True): "Fallout 4 VR",
 }
+
+
+# the leading dotted number of a version, which require_min_version compares
+_VERSION = re.compile(r"\d+(?:\.\d+)*")
 
 
 class RequirementError(Exception):
@@ -90,6 +95,38 @@ def require_actions(mod_tool: ModTool, actions: Iterable[str]) -> dict[str, Any]
     missing = [action for action in actions if action not in offered]
     if missing:
         raise RequirementError(f"{mod_tool.name} lacks actions {', '.join(missing)}: deploy this build")
+    return health
+
+
+def version_numbers(text: str) -> tuple[int, ...] | None:
+    """The leading dotted number of a version as a tuple without trailing zeros ("0.79.0-beta": (0, 79)), or None."""
+    found = _VERSION.match(text)
+    if found is None:
+        return None
+    numbers = [int(part) for part in found.group(0).split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    return tuple(numbers)
+
+
+def require_min_version(mod_tool: ModTool, minimum: str) -> dict[str, Any]:
+    """
+    Check that the mod tool's health reports minimum or a later version, and return the health answer. Versions
+    compare by their leading dotted number ("0.79.2-beta" is 0.79.2); a running version without one raises
+    RequirementError, a minimum without one ValueError.
+    """
+    health = _mod_health(mod_tool, "version")
+    running = str(health["version"])
+    wanted = version_numbers(minimum)
+    if wanted is None:
+        raise ValueError(f"minimum version {minimum!r} is not a dotted number")
+    numbers = version_numbers(running)
+    if numbers is None:
+        raise RequirementError(f"{mod_tool.name} reports version {running!r}, not a dotted number: deploy a release")
+    if numbers < wanted:
+        raise RequirementError(
+            f"the game runs {mod_tool.name} {running}, this run needs {minimum} or later: deploy a newer build"
+        )
     return health
 
 
