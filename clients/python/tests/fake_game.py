@@ -3,9 +3,10 @@ writes its port to runtime.json under %LOCALAPPDATA%/devbench, as devbench does.
 
 python fake_game.py PIDFILE [--delay S] [--loading S] [--game G] [--vr 0|1] [--health-vr 0|1] [--port N] [--handoff]
 
-The serving process appends its pid to PIDFILE so the test can kill it. --loading keeps LoadingMenu up for S seconds
-after the port opens, then MainMenu. --health-vr makes health say another vr than the runtime.json folder's.
---handoff starts the same fake again detached, without --handoff, and exits at once, as a launcher handing off does.
+The serving process appends its pid to PIDFILE so the test can kill it; its quit tool ends it. --loading keeps
+LoadingMenu up for S seconds after the port opens, then MainMenu. --health-vr makes health say another vr than the
+runtime.json folder's. --handoff starts the same fake again detached, without --handoff, and exits at once, as a
+launcher handing off does.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -74,6 +76,12 @@ def main() -> None:
         loading = time.monotonic() - started < options.loading
         return {"ok": True, "openMenus": ["LoadingMenu"] if loading else ["MainMenu"], "messageBoxOpen": False}
 
+    def quit_tool(args):
+        threading.Timer(0.1, lambda: os._exit(0)).start()
+        return {"ok": True, "pid": os.getpid(), "quitting": True, "killAfterMs": args.get("killAfterMs", 0)}
+
+    fake.tools["quit"] = quit_tool
+    fake.tools["ping"] = lambda args: {"ok": True, "game": options.game, "vr": health_vr}
     if options.game == "fallout4":
         fake.tools["menu"] = menu
     runtime = Path(os.environ["LOCALAPPDATA"]) / "devbench" / _folder(options.game, vr) / "runtime.json"

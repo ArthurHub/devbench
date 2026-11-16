@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -591,3 +592,115 @@ def test_left_handed_needs_a_vr_game(pytester):
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(["*--left-handed needs a VR game*"])
+
+
+BENCH_ONLY_CONFTEST = """
+import devbench.testing
+
+pytest_plugins = ["devbench.testing"]
+DEVBENCH = devbench.testing.Config(game="fallout4", vr=True)
+"""
+
+
+def _pid_gone(pid):
+    """Whether the process has exited, waiting up to 5 s."""
+    from devbench.process import _Process
+    from devbench.waits import wait_until
+
+    process = _Process(pid)
+    try:
+        return wait_until(lambda: not process.alive(), 5, 0.05, f"process {pid} to exit")
+    finally:
+        process.close()
+
+
+def test_a_run_launches_the_game_when_none_answers(pytester, launching):
+    pytester.makeconftest(BENCH_ONLY_CONFTEST)
+    pytester.makepyfile(test_up="def test_up(bench): assert bench.health()['game'] == 'fallout4'")
+
+    result = pytester.runpytest("--devbench-launch", subprocess.list2cmdline(launching.game("--delay", "0.3")))
+
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*no game answers: launching it*", "*the game is up after * s*"])
+    assert len(launching.pids()) == 1
+
+
+def test_the_launch_command_comes_from_the_environment(pytester, launching, monkeypatch):
+    monkeypatch.setenv("DEVBENCH_LAUNCH", subprocess.list2cmdline(launching.game()))
+    pytester.makeconftest(BENCH_ONLY_CONFTEST)
+    pytester.makepyfile(test_up="def test_up(bench): pass")
+
+    reprec = pytester.inline_run()
+
+    reprec.assertoutcome(passed=1)
+    assert _record(reprec).notes[0].startswith("Launched the game: up after")
+
+
+def test_a_launch_that_fails_exits_with_why(pytester, launching):
+    pytester.makeconftest(BENCH_ONLY_CONFTEST)
+    pytester.makepyfile(test_up="def test_up(bench): pass")
+
+    result = pytester.runpytest("--devbench-launch", str(launching.folder / "no-such-launcher.exe"))
+
+    assert result.ret == 2
+    result.stdout.fnmatch_lines(["*launching the game: the launch command could not start*"])
+
+
+def test_a_game_that_answers_is_not_launched(pytester, fake, game, launching):
+    _conftest(pytester)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port), "--devbench-launch", "no-such-launcher.exe")
+
+    reprec.assertoutcome(passed=1)
+    assert launching.pids() == []
+
+
+def test_devbench_quit_quits_after_the_backup_is_put_back(pytester, fake, game):
+    def quit_tool(args):
+        fake.stop()
+        return {"ok": True, "quitting": True, "killAfterMs": args["killAfterMs"]}
+
+    fake.tools["quit"] = quit_tool
+    _conftest(pytester)
+    pytester.makepyfile(
+        test_light="""
+        from devbench import write_text
+
+        def test_changes_the_config(game):
+            write_text(game, "mygames", "Mods_Config/MyMod/MyMod.toml", "changed")
+        """
+    )
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port), "--devbench-quit")
+
+    reprec.assertoutcome(passed=1)
+    quit_at = fake.calls.index(("POST", "/api/tool/quit", {"killAfterMs": 60000}))
+    writes = [
+        i for i, (_, path, body) in enumerate(fake.calls) if path == "/api/tool/files" and body["action"] == "write"
+    ]
+    assert writes and writes[-1] < quit_at
+    assert game.files.files == {MOD_FILE: b"original"}
+    assert _record(reprec).notes[-1] == "Quit the game."
+
+
+def test_devbench_quit_also_quits_a_launched_game(pytester, launching):
+    pytester.makeconftest(BENCH_ONLY_CONFTEST)
+    pytester.makepyfile(test_up="def test_up(bench): pass")
+
+    result = pytester.runpytest("--devbench-launch", subprocess.list2cmdline(launching.game()), "--devbench-quit")
+
+    result.assert_outcomes(passed=1)
+    assert _pid_gone(launching.pids()[0])
+
+
+def test_devbench_quit_after_a_failed_setup(pytester, fake, game):
+    FakeGame(fake, version="1.2.2")
+    fake.tools["quit"] = lambda args: (fake.stop(), {"ok": True, "quitting": True})[1]
+    _conftest(pytester)
+    pytester.makepyfile(test_light="def test_uses_the_game(game): pass")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--devbench-quit")
+
+    assert result.ret == 2
+    assert any(path == "/api/tool/quit" for _, path, _ in fake.calls)

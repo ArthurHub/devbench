@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import time
 import types
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
@@ -14,11 +16,12 @@ import pytest
 
 from devbench import vr
 from devbench.checks import RequirementError, require, require_actions, require_tools, require_version
-from devbench.client import Devbench, DevbenchError, ModTool, find_port
+from devbench.client import HOST, Devbench, DevbenchError, ModTool, find_port
 from devbench.events import Events
 from devbench.files import Backup, delete_file, read_bytes
 from devbench.games import fallout4
 from devbench.log import LogMark
+from devbench.process import launch, quit_game
 from devbench.testing._config import Config
 from devbench.testing._picture import bmp_to_png
 from devbench.testing._record import Failure, Record
@@ -29,6 +32,14 @@ _EXIT_CODE = 2
 
 # the log lines since the test started that a failure keeps
 _LOG_TAIL = 100
+
+# how long a connect to the game's port may take before nothing counts as listening there
+_CONNECT_TIMEOUT = 1.0
+
+# --devbench-quit: the quit tool's watchdog terminates a game whose shutdown hangs this long, and the wait for its
+# process outlasts it
+_QUIT_KILL_AFTER = 60.0
+_QUIT_TIMEOUT = 90.0
 
 # the longest side of a failure's dump, in pixels: a third of FO4VR's 6144-wide frame, so each eye is 1024 wide
 _PICTURE_SIZE = 2048
@@ -240,11 +251,53 @@ def _exit(message: str) -> NoReturn:
     pytest.exit(message, returncode=_EXIT_CODE)
 
 
+def _listening(port: int) -> bool:
+    """Whether something accepts a connection on the port now."""
+    try:
+        socket.create_connection((HOST, port), timeout=_CONNECT_TIMEOUT).close()
+    except OSError:
+        return False
+    return True
+
+
+def _say(config: pytest.Config, line: str) -> None:
+    """Write a line to the terminal at once, also from a fixture whose output pytest captures."""
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:
+        return
+    capture = config.pluginmanager.get_plugin("capturemanager")
+    if capture is None:
+        reporter.write_line(line)
+        return
+    with capture.global_and_fixture_disabled():
+        reporter.write_line(line)
+
+
+def _launch(config: pytest.Config, command: str, port: int | None) -> Devbench:
+    """Launch the game with the user's command and wait for it (devbench.process.launch); a failure exits the run."""
+    run = _run(config)
+    _say(config, "devbench: no game answers: launching it with the launch command")
+    start = time.monotonic()
+    try:
+        bench = launch(command, run.config.game, run.config.vr, port=port)
+    except DevbenchError as error:
+        _exit(f"launching the game: {error}")
+    took = time.monotonic() - start
+    _say(config, f"devbench: the game is up after {took:.0f} s")
+    run.record.note(f"Launched the game: up after {took:.0f} s.")
+    return bench
+
+
 def _connect(config: pytest.Config) -> Devbench:
-    """A client on --devbench-port or the port the game's runtime.json names, checked to be the Config's game."""
+    """
+    A client on --devbench-port or the port the game's runtime.json names, checked to be the Config's game. When
+    nothing listens there and a launch command is set (--devbench-launch, else DEVBENCH_LAUNCH), the game is launched.
+    """
     devbench = _run(config).config
-    port = config.getoption("--devbench-port") or find_port(devbench.game, devbench.vr)
-    bench = Devbench(port)
+    pinned = config.getoption("--devbench-port")
+    port = pinned or find_port(devbench.game, devbench.vr)
+    command = config.getoption("--devbench-launch") or os.environ.get("DEVBENCH_LAUNCH")
+    bench = _launch(config, command, pinned) if command and not _listening(port) else Devbench(port)
     try:
         require(bench, devbench.game, devbench.vr)
     except RequirementError as error:
@@ -262,6 +315,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="put back the files and the handedness of a backup a run left, and run no test",
     )
     group.addoption("--left-handed", action="store_true", help="run left-handed (VR), overriding Config.handedness")
+    group.addoption(
+        "--devbench-launch",
+        metavar="COMMAND",
+        help="when no game answers, run this command to launch one (default: the DEVBENCH_LAUNCH environment variable)",
+    )
+    group.addoption("--devbench-quit", action="store_true", help="quit the game when the session ends")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -302,7 +361,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
                 code = _EXIT_CODE
                 said.append(f"kept the handedness to put back ({error}): run --e2e-restore again in a loaded game")
     finally:
-        bench.close()
+        if config.getoption("--devbench-quit"):
+            said.append(_quit(bench))
+        else:
+            bench.close()
     pytest.exit("; ".join(said), returncode=code)
 
 
@@ -313,12 +375,31 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         items.sort(key=lambda item: order.index(item.path.name) if item.path.name in order else len(order))
 
 
+def _quit(bench: Devbench) -> str:
+    """
+    Quit the game (quit_game, its watchdog armed) and say how that went; a game that does not go is said, not raised.
+    """
+    try:
+        quit_game(bench, timeout=_QUIT_TIMEOUT, kill_after=_QUIT_KILL_AFTER)
+    except DevbenchError as error:
+        return f"the game did not quit: {error}"
+    return "quit the game"
+
+
 @pytest.fixture(scope="session")
 def bench(pytestconfig: pytest.Config) -> Iterator[Devbench]:
-    """The running game's devbench, checked to be the Config's game (and VR); anything else exits the run."""
+    """
+    The running game's devbench, checked to be the Config's game (and VR), launched first when none answers and a
+    launch command is set; anything else exits the run. With --devbench-quit, the game is quit at the end, after the
+    game fixture's teardown.
+    """
     bench = _connect(pytestconfig)
     yield bench
-    bench.close()
+    if pytestconfig.getoption("--devbench-quit"):
+        said = _quit(bench)
+        _run(pytestconfig).record.note(said[0].upper() + said[1:] + ".")
+    else:
+        bench.close()
 
 
 def _setup_step(what: str, step: Callable[[], Any]) -> Any:
