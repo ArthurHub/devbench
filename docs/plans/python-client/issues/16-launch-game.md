@@ -1,6 +1,6 @@
 # 16 Launch and restart the game
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 10, 15
 
 Spec: [../spec.md](../spec.md).
@@ -31,13 +31,15 @@ The client does not know about MO2, Steam or SteamVR; it runs a command the user
   conftest: it is the user's setup (instance, profile, paths), not the mod's. For FO4VR through a portable MO2:
 
   ```
-  "<MO2 folder>\ModOrganizer.exe" -p <profile> run "<executable title>"
+  "<MO2 folder>\ModOrganizer.exe" -p <profile> run -e "<executable title>"
   ```
+
+  `-e` makes `run` take one of MO2's executables by its title; without it MO2 looks for a file of that name.
 
 - Plugin:
   - `_connect`: when nothing answers on the port and a launch command is set, launch instead of exiting; this covers
     `--e2e-restore` too. `--devbench-port` pins the port. The terminal shows a line before the launch and one after it
-    with how long devbench and the main menu took; the report gets a note with the durations, not the command.
+    with how long the game took to be up; the report notes that time, not the command.
   - `--devbench-quit` quits the game in the `bench` fixture's teardown (after the `game` fixture put the backup and
     handedness back, also after a setup failure exited the run), whether or not the run launched it, with
     `kill_after=60`; the report notes it.
@@ -48,3 +50,8 @@ Unit tests with a fake launcher that starts the fake server after a delay (also 
 that never does (timeout message); a game already answering refuses the launch. pytester tests for the plugin's launch
 and quit. Live: an unattended run of the flashlight suite from a closed game through MO2 to a finished report in FO4VR;
 the client README and `docs/FALLOUT4.md` record it.
+
+Done 2026-11-16 on FO4VR 1.2.72 through a portable MO2 2.5.2: the flashlight suite ran from a closed game to a report
+twice, once with MO2 open (the new `ModOrganizer.exe` handed off and exited) and once with MO2 closed (it stayed up
+while the game ran and exited with it). The main menu was up 18-19 s after the launch, and `--devbench-quit` quit the
+game both times.

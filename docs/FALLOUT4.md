@@ -295,6 +295,14 @@ irm "http://127.0.0.1:8931/api/tool/quit" -Method Post -Body '{"killAfterMs":600
   hangs has usually stopped this listener already, so no later call could reach it. With
   `killAfterMs` > 0 a thread started by the call terminates the process if it still runs
   that long after; `0` (the default) never kills.
+- **Launching is the client's job.** The DLL cannot start the game it runs in, so the
+  Python client's `devbench.process.launch` runs the user's command and waits for health
+  and the main menu; its pytest plugin launches the game when none answers
+  (`--devbench-launch` / `DEVBENCH_LAUNCH`) and quits it at the end (`--devbench-quit`).
+  Through MO2 the command is `ModOrganizer.exe -p <profile> run -e "<executable title>"`.
+  On FO4VR 1.2.72 with MO2 2.5.2 (2026-11-16) a full suite ran unattended from a closed
+  game to a report, both with MO2 open (the command hands off and exits) and closed; the
+  main menu was up 18-19 s after the launch.
 
 ## `nodes`, the short version
 

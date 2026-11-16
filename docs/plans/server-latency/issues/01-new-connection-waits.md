@@ -31,4 +31,6 @@ earlier clients that never closed) hold all of them. That fits "the first reques
 
 A liveness check with a short timeout reads a live game as silent: `devbench.process`'s 2 s probe missed the pid at
 the main menu and in game. `quit_game` still worked (the `quit` tool's answer carries the pid), but a `qqq` fallback
-or `wait_gone` without a pid would wait on the port instead of the process. `launch` (issue 16) waits on health too.
+or `wait_gone` without a pid would wait on the port instead of the process. `launch` (python-client issue 16) works
+around it: it counts a port that accepts a connection as held, and while waiting gives each call on its one kept-alive
+connection up to 30 s.

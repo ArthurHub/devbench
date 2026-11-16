@@ -171,6 +171,29 @@ first button, and gives up after `limit` seconds with `quiet` False. A game alre
 that a modal blocked raises `DevbenchError`. The cell is an interior cell's editor ID; an unknown one raises
 `DevbenchError`. Nothing is printed: `dialogs` holds what each closed box said.
 
+Launch, quit and restart the game. The client knows nothing about MO2, Steam or SteamVR: `launch` runs the command you
+give it, the same one you would type in a terminal:
+
+```python
+from devbench import launch, quit_game, restart
+
+MO2 = r'"C:\Games\MO2\ModOrganizer.exe" -p Default run -e "Fallout 4 VR (F4SEVR)"'
+bench = launch(MO2, "fallout4", vr=True)  # timeout=300; returns a client once the game is up
+quit_game(bench, kill_after=60)  # the quit tool, then waits for the process to exit
+bench = restart(bench, MO2, "fallout4", vr=True)  # quit_game, then launch
+```
+
+`launch` starts the command detached (stopping the script leaves the game running), then waits for devbench to answer
+as that game and, on Fallout 4, for the main menu (or a game a save loaded at start). A launcher that hands off and
+exits is fine: an MO2 already open takes the `run` and the new `ModOrganizer.exe` exits. A port that already accepts a
+connection launches nothing and raises `DevbenchError`; so does a timeout, saying what it last saw (nothing listening,
+another game, the menus open while not ready) and the launcher's exit code. MO2's `run` needs `-e` to run one of its
+executables by its title; without it, the title is taken for a file.
+
+`quit_game` waits for the game's process to exit (the pid from the `quit` tool or health), not just for the port to
+close. `kill_after` arms the tool's watchdog, which terminates a game whose shutdown hangs. `wait_gone(port, pid)`
+waits for a game you quit some other way.
+
 ## pytest plugin
 
 `devbench.testing` runs a mod's end-to-end suite in the game: it connects, enters a game in the test cell, checks the
@@ -220,6 +243,18 @@ the message that says what to do.
 Tests run in `areas` order; files it does not list run last. `--devbench-port` picks the port (default: the game's
 `runtime.json`). `--e2e-restore` puts back a backup a run left and runs no test; a restore that fails at the end of a
 run keeps the backup for it.
+
+When no game answers and a launch command is set, `bench` launches the game (`launch`) instead of exiting. The command
+is your setup (MO2 instance, profile, paths), not the mod's, so it never goes in the conftest: pass
+`--devbench-launch "<command>"` or set `DEVBENCH_LAUNCH` (the option wins). The report notes how long the game took
+to come up. `--devbench-quit` quits the game when the session ends (after the files and the handedness are put back,
+also after a setup failure), with a 60 s watchdog for a hung shutdown, and notes it. Together they make an unattended
+run from a closed game to a report:
+
+```powershell
+$env:DEVBENCH_LAUNCH = '"C:\Games\MO2\ModOrganizer.exe" -p Default run -e "Fallout 4 VR (F4SEVR)"'
+pytest tests/e2e --devbench-quit
+```
 
 With `handedness` (or `--left-handed`, which overrides it) `game` writes the player's handedness to
 `.backup/handedness.json`, sets the run's with `set_left_handed` (devbench answers once the game's wands have swapped)
