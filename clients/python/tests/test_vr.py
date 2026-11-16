@@ -150,6 +150,14 @@ def test_place_sends_a_world_target_for_one_hand(bench, tool):
     assert answer["corrections"] == 1
 
 
+def test_place_sends_a_head_offset_and_an_inward_yaw(bench, tool):
+    Hands(bench, "e2e").place("offhand", [1, 2, 3], head_offset=(4, 5, -6), yaw_in=25)
+
+    assert tool.calls[-1]["hands"] == {
+        "offhand": {"world": [1.0, 2.0, 3.0], "headOffset": [4.0, 5.0, -6.0], "yawIn": 25}
+    }
+
+
 def test_place_leaves_out_what_is_not_given(bench, tool):
     Hands(bench, "e2e").place("left", [0, 0, 0])
 

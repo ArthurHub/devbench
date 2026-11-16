@@ -1,6 +1,6 @@
 # 19 Pose targets
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Source: the flashlight suite's `Controllers.place_in_zone` and `_aim`.

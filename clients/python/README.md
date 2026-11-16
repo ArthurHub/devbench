@@ -125,6 +125,7 @@ hands = Hands(bench, "mymod-e2e")  # the owner of the hold; hold_ms= for a hold 
 if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
     with hands:  # starts in the ready pose; always stops, handing the devices back
         answer = hands.place("left", [x, y, z], pitch=10, yaw=10)  # devbench's answer: corrections, hands
+        hands.place("offhand", center, head_offset=(5, 0, -3), yaw_in=25)  # mirrors for either hand
         hands.head("down")  # "ready", "down" or {pitch?, yaw?, lookAt?, ...}
         hands.tap("left")  # press("left", ["trigger"], 100); returns once released
         hands.long_press("right", ["grip"])  # 1000 ms
@@ -134,7 +135,9 @@ if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
 
 A hand is a physical controller (`left` / `right`) or a role (`primary` / `offhand`), which devbench resolves against
 the game's handedness when the call arrives; any other name raises `ValueError`. `pitch` and `yaw` pass through as the
-`input` tool takes them. `TAP_MS` (100) and `LONG_PRESS_MS` (1000) are F4VR-CommonFramework's gesture thresholds.
+`input` tool takes them. `head_offset` (outward, forward, up) moves the point along the head's axes as posed, outward
+toward the hand's own side, and `yaw_in` replaces `yaw` with a turn toward the body (in tracking space, mirrored around
+the body's forward), so one recorded placement fits either hand and either handedness. `TAP_MS` (100) and `LONG_PRESS_MS` (1000) are F4VR-CommonFramework's gesture thresholds.
 A press without a hold of this owner (it never started, or the hold ran out) raises `DevbenchError` (409). `stop`
 ignores a refused stop, and on an exception inside the `with` it never hides that exception.
 

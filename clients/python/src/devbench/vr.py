@@ -122,23 +122,32 @@ class Hands:
         hand: str,
         world: Sequence[float],
         *,
+        head_offset: Sequence[float] | None = None,
         pitch: float | None = None,
         yaw: float | None = None,
+        yaw_in: float | None = None,
         corrections: int | None = None,
         tolerance: float | None = None,
         move_ms: int | None = None,
     ) -> dict[str, Any]:
         """
-        Move a hand's wand (left / right / primary / offhand) to a world point; the other hand stays. pitch / yaw
-        (degrees) point the controller, passed as devbench takes them; corrections, tolerance (world units) and move_ms
-        tune the move. Returns devbench's answer: corrections made, and per hand where the wand landed and its error.
+        Move a hand's wand (left / right / primary / offhand) to a world point; the other hand stays. head_offset
+        (outward, forward, up; world units along the head's axes, outward toward the hand's own side) moves the point
+        so one offset mirrors around the head. pitch / yaw (degrees) point the controller, passed as devbench takes
+        them; yaw_in instead of yaw turns it toward the body for either hand. corrections, tolerance (world units) and
+        move_ms tune the move. Returns devbench's answer: corrections made, and per hand where the wand landed and its
+        error.
         """
         _check_hand(hand)
         target: dict[str, Any] = {"world": [float(c) for c in world]}
+        if head_offset is not None:
+            target["headOffset"] = [float(c) for c in head_offset]
         if pitch is not None:
             target["pitch"] = pitch
         if yaw is not None:
             target["yaw"] = yaw
+        if yaw_in is not None:
+            target["yawIn"] = yaw_in
         options = {"corrections": corrections, "toleranceUnits": tolerance, "moveMs": move_ms}
         return self.pose(hands={hand: target}, **{key: value for key, value in options.items() if value is not None})
 
