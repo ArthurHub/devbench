@@ -13,6 +13,15 @@ def open_menus(bench: Devbench) -> list[str]:
     return bench.tool("menu", action="list")["openMenus"]
 
 
+def message_box_text(bench: Devbench) -> str:
+    """
+    What the open message box says, as "header body" (either may be empty). A box that cannot be read, or none open,
+    raises DevbenchError.
+    """
+    box = bench.tool("menu", action="describe")
+    return f"{box.get('headerText') or ''} {box.get('bodyText') or ''}".strip()
+
+
 def close_dialogs(bench: Devbench, limit: int = 20, pause: float = 0.5) -> list[str]:
     """
     Answer each open message box with its first button, as a new game's mod popups need, and return what each said
@@ -23,8 +32,7 @@ def close_dialogs(bench: Devbench, limit: int = 20, pause: float = 0.5) -> list[
     answered: list[str] = []
     while len(answered) < limit and bench.tool("menu", action="list")["messageBoxOpen"]:
         try:
-            box = bench.tool("menu", action="describe")
-            said = f"{box.get('headerText') or ''} {box.get('bodyText') or ''}".strip()
+            said = message_box_text(bench)
         except DevbenchError as error:
             said = f"(not read: {error})"
         bench.tool("menu", action="accept", index=0)

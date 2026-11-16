@@ -1,4 +1,5 @@
-"""Log mark: the lines after the mark, a restarted log, more than one call returns, a missing file, errors."""
+"""Log mark: the lines after the mark, a restarted log, more than one call returns, a missing file, errors and
+warnings."""
 
 import re
 
@@ -100,6 +101,27 @@ def test_errors_matches_both_log_formats(bench, log):
         "[09:00:05.000] [E] devbench broke",
         "[09:00:06.000] [C] devbench worse",
     ]
+
+
+def test_warnings_matches_both_log_formats(bench, log):
+    log.lines.append("09:00:00.000 warning before the mark")
+    mark = LogMark(bench, "Mod.log")
+    log.lines += [
+        "09:00:01.000 info fine",
+        "09:00:02.000 warning meh",
+        "09:00:03.000 warn short",
+        "09:00:04.000 error broke",
+        "[09:00:05.000] [W] devbench meh",
+        "[09:00:06.000] [E] devbench broke",
+        "09:00:07.000 info a warning in the text",
+    ]
+
+    assert mark.warnings() == [
+        "09:00:02.000 warning meh",
+        "09:00:03.000 warn short",
+        "[09:00:05.000] [W] devbench meh",
+    ]
+    assert mark.warnings(pattern="broke") == ["09:00:04.000 error broke", "[09:00:06.000] [E] devbench broke"]
 
 
 def test_errors_takes_a_pattern(bench, log):

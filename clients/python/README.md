@@ -60,11 +60,12 @@ were lost (more than the 256-event ring between two reads) or the game restarted
 Run console commands and handle menus with free functions that take the client:
 
 ```python
-from devbench import close_dialogs, close_menus, console, console_number, open_menus
+from devbench import close_dialogs, close_menus, console, console_number, message_box_text, open_menus
 
 console(bench, "player.GetPos z")  # the lines it printed
 console_number(bench, "player.GetInCell QASmoke")  # 1.0: the number after its '>>'
 "HUDMenu" in open_menus(bench)
+message_box_text(bench)  # "header body" of the open box; DevbenchError when none can be read
 said = close_dialogs(bench)  # answer each message box with its first button
 close_menus(bench, ["PauseMenu"])  # a refused close is ignored
 ```
@@ -107,13 +108,28 @@ Read what a plugin logged after a point, from its log in the extender's log fold
 mark = LogMark(bench, "MyMod.log")  # the line count now; a missing file raises DevbenchError
 ...
 mark.lines()  # the lines written since the mark
-mark.errors()  # those that are error or critical lines; errors(pattern=r"^\S+ warn") for others
+mark.errors()  # those that are error or critical lines; errors(pattern=r"^\S+ debug ") for others
+mark.warnings()  # those that are warning lines
 ```
 
-`errors` matches the mods' `<time> error <msg>` format and devbench's own `[<time>] [E] <msg>`; `pattern` is a regex
-string or compiled pattern, found with `re.search`. A log shorter than the mark was restarted with the game, and all of
+`errors` matches the mods' `<time> error <msg>` format and devbench's own `[<time>] [E] <msg>`, and `warnings` their
+`<time> warning <msg>` and `[<time>] [W] <msg>`; `pattern` is a regex string or compiled pattern, found with
+`re.search`. A log shorter than the mark was restarted with the game, and all of
 it counts as new. The log tool returns at most the last 5000 lines, so more than that returns the last 5000 and
 `mark.missed` says how many were not read.
+
+Wait for a value the game reports to satisfy a condition, with the last value read in the error:
+
+```python
+from devbench import wait_for, wait_until
+
+wait_until(lambda: "HUDMenu" in open_menus(bench), 30, what="the HUD")  # the first true value
+light_on = lambda s: s["light"]["on"]
+state = wait_for(lambda: mod.call("state"), light_on, 3, what="the light on", describe=lambda s: s["light"])
+```
+
+Both poll every `interval` (0.1 s) and raise `TimeoutError` after `timeout` seconds. `wait_for`'s error ends with the
+last value through `describe`, or its `repr` cut to 500 characters (also when `describe` raises).
 
 Drive the VR hands (Fallout 4 VR) through devbench's `input` pose: it holds the HMD and both controllers, places a
 hand's wand at a world point and presses buttons on top, and the game sees real devices:
@@ -284,6 +300,8 @@ pictures. Nothing is written for `--collect-only`, `--e2e-restore` or a run with
 
 When a test that uses `game` fails, the failure row gets:
 
+- the open menus and, with a message box up, its text (read first, before the box may close; a read that fails says
+  why in the row). They also print under the failure in the terminal, as a `devbench` section;
 - the lines `log` gained since the test started (the last 100, collapsed);
 - a picture of render target `picture` (`rendertarget dump` at 2048, the game's copy deleted, saved beside the page as
   PNG; in VR only the left eye, 1024x1088 on FO4VR). The first picture that can't be taken (a 501 off the main thread,

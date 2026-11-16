@@ -37,13 +37,28 @@ class Result:
 @dataclass
 class Failure:
     """
-    What the plugin took when a test failed: a picture of a render target (its path in the report folder) or why
-    none was taken, and the mod log's lines since the test started. None where the run did not take it.
+    What the plugin took when a test failed: the open menus and a message box's text (or why the menus were not
+    read), a picture of a render target (its path in the report folder) or why none was taken, and the mod log's
+    lines since the test started. None where the run did not take it.
     """
 
+    menus: list[str] | None = None
+    message_box: str | None = None
+    menus_error: str | None = None
     picture: str | None = None
     picture_error: str | None = None
     log: list[str] | None = None
+
+    def menu_lines(self) -> list[str]:
+        """The menus part as text lines for the report and the terminal; empty when none was taken."""
+        if self.menus_error is not None:
+            return [f"Menus not read: {self.menus_error}"]
+        if self.menus is None:
+            return []
+        lines = [f"Open menus: {', '.join(self.menus) or '(none)'}"]
+        if self.message_box is not None:
+            lines.append(f"Message box: {self.message_box}")
+        return lines
 
 
 @dataclass

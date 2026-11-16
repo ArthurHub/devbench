@@ -72,7 +72,8 @@ def _by_area(record: Record) -> list[tuple[str, list[Result]]]:
 
 def _failures(record: Record) -> list[str]:
     """
-    The failures section: each failed or errored test's message, why it has no picture, its log tail (collapsed),
+    The failures section: each failed or errored test's message, its open menus and message box (or why they were
+    not read), why it has no picture, its log tail (collapsed),
     and a picture column when any failure has a picture.
     """
     failed = [result for result in record.results if result.outcome in ("failed", "error")]
@@ -85,6 +86,8 @@ def _failures(record: Record) -> list[str]:
     for result in failed:
         failure = taken[result.nodeid]
         what = f"<pre>{_e(result.message)}</pre>"
+        for line in failure.menu_lines() if failure else []:
+            what += f"<div class='meta'>{_e(line)}</div>"
         if failure and failure.picture_error:
             what += f"<div class='meta'>No picture: {_e(failure.picture_error)}</div>"
         if failure and failure.log is not None:

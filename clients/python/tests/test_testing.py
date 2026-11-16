@@ -45,9 +45,9 @@ def _dumped(x, y, n=1):
 
 class FakeGame:
     """
-    The fake devbench as Fallout 4 VR with a game loaded in QASmoke, no message box open, the mod's tool (mymod)
-    offering actions at version (its "say" action writes a line to its log), its config file in the files tool, its
-    log, and render targets that dump into the files tool.
+    The fake devbench as Fallout 4 VR with a game loaded in QASmoke, the HUD and no message box open, the mod's tool
+    (mymod) offering actions at version (its "say" action writes a line to its log, its "menus" action sets the menu
+    state), its config file in the files tool, its log, and render targets that dump into the files tool.
     """
 
     def __init__(self, fake, actions=("light", "zones"), version="1.2.3"):
@@ -58,6 +58,12 @@ class FakeGame:
         self.left_handed = False
         self.handedness_sets = []
         self.refuse_handedness = None
+        # the open menus, whether a message box is open, its describe answer (None: one that cannot be read), and
+        # whether the menu list fails (the mod's "menus" action sets it)
+        self.menus = ["HUDMenu"]
+        self.box_open = False
+        self.box = None
+        self.menus_broken = False
         fake.tools["ping"] = lambda args: {"ok": True, "game": "fallout4", "vr": True}
         fake.tools["menu"] = self._menu
         fake.tools["inspect"] = lambda args: {"ok": True, "playerLoaded": True}
@@ -71,6 +77,11 @@ class FakeGame:
     def _mod(self, args, version, actions):
         if args["action"] == "say":
             self.log.append(args["text"])
+        if args["action"] == "menus":
+            # set from a test, after the setup answered any box: names, box_open, box, broken
+            for key in ("names", "box_open", "box", "broken"):
+                if key in args:
+                    setattr(self, {"names": "menus", "broken": "menus_broken"}.get(key, key), args[key])
         return {"ok": True, "version": version, "actions": list(actions)}
 
     def _dump(self, args):
@@ -91,8 +102,14 @@ class FakeGame:
         return {"leftHanded": self.left_handed, "was": was, "changed": was != self.left_handed, "elapsedMs": 200}
 
     def _menu(self, args):
+        if args["action"] == "describe":
+            if self.box is None:
+                return 400, {"ok": False, "error": "currentMessage did not validate"}
+            return {"ok": True, "messageBoxOpen": True, **self.box}
         assert args["action"] == "list"
-        return {"ok": True, "openMenus": ["HUDMenu"], "messageBoxOpen": False}
+        if self.menus_broken:
+            return 501, {"ok": False, "error": "menu: off on this runtime"}
+        return {"ok": True, "openMenus": list(self.menus), "messageBoxOpen": self.box_open}
 
 
 @pytest.fixture
@@ -388,6 +405,78 @@ def test_the_first_failed_picture_turns_pictures_off(pytester, fake, game):
         f"No failure pictures from test_a.py::test_one on: {first.picture_error}"
     ]
     assert sum(path == "/api/tool/rendertarget" for _, path, _ in fake.calls) == 1
+
+
+def test_a_failure_records_the_open_menus_and_the_message_box(pytester, fake, game):
+    _conftest(pytester)
+    pytester.makepyfile(
+        test_a="""
+        def test_blocked(game):
+            box = {"headerText": "Mod", "bodyText": "Pick <one>"}
+            game.tool("mymod", action="menus", names=["HUDMenu", "MessageBoxMenu"], box_open=True, box=box)
+            assert False, "inert: a game menu blocks the gestures"
+        """
+    )
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(
+        ["*- devbench -*", "Open menus: HUDMenu, MessageBoxMenu", "Message box: Mod Pick <one>"]
+    )
+    _, text = _page(result)
+    failures = text[text.index("<h2>Failures") :]
+    assert "Open menus: HUDMenu, MessageBoxMenu" in failures
+    assert "Message box: Mod Pick &lt;one&gt;" in failures
+    # the menus are the first thing the failure reads, before the log and the picture
+    failed = max(i for i, (_, path, body) in enumerate(fake.calls) if body and body.get("action") == "menus")
+    assert [(path, body["action"]) for _, path, body in fake.calls[failed + 1 : failed + 3]] == [
+        ("/api/tool/menu", "list"),
+        ("/api/tool/menu", "describe"),
+    ]
+
+
+def test_a_message_box_that_cannot_be_read_still_lists_the_menus(pytester, fake, game):
+    _conftest(pytester)
+    pytester.makepyfile(
+        test_a="""
+        def test_one(game):
+            game.tool("mymod", action="menus", names=["MessageBoxMenu"], box_open=True, box=None)
+            assert False
+        """
+    )
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    failure = _record(reprec).failures["test_a.py::test_one"]
+    assert failure.menus == ["MessageBoxMenu"]
+    assert failure.message_box.startswith("(not read: ") and "did not validate" in failure.message_box
+    assert failure.menus_error is None
+
+
+def test_a_menu_read_that_fails_leaves_a_note_and_the_next_failure_tries_again(pytester, fake, game):
+    _conftest(pytester)
+    pytester.makepyfile(
+        test_a="""
+        def test_one(game):
+            game.tool("mymod", action="menus", broken=True)
+            assert False
+
+        def test_two(game):
+            game.tool("mymod", action="menus", broken=False)
+            assert False
+        """
+    )
+
+    reprec = pytester.inline_run("--devbench-port", str(fake.port))
+
+    reprec.assertoutcome(failed=2)
+    record = _record(reprec)
+    first, second = (record.failures[f"test_a.py::test_{n}"] for n in ("one", "two"))
+    assert first.menus is None and "menu: off on this runtime" in first.menus_error
+    assert first.menu_lines() == [f"Menus not read: {first.menus_error}"]
+    assert second.menus == ["HUDMenu"] and second.menus_error is None
+    assert not any("menu" in note.lower() for note in record.notes)
 
 
 def test_a_failed_session_fixture_is_captured_once(pytester, fake, game):

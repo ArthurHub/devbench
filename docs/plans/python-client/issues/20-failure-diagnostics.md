@@ -1,6 +1,6 @@
 # 20 Failure diagnostics
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Source: the flashlight suite's `Flashlight.wait`, `blocked_by` and its log-warning

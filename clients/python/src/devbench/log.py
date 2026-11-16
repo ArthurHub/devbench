@@ -1,4 +1,5 @@
-"""A mark in a plugin's log through devbench's log tool: the lines written after it, and the errors among them."""
+"""A mark in a plugin's log through devbench's log tool: the lines written after it, and the errors and warnings among
+them."""
 
 from __future__ import annotations
 
@@ -14,11 +15,15 @@ _TAIL_MAX = 5000
 # devbench's own "[12:00:00.000] [E] <msg>"
 ERROR_PATTERN = re.compile(r"^\S+ (error|critical) |^\[[^\]]*\] \[[EC]\] ")
 
+# a warning line in the same two formats: "<time> warning <msg>" (or "warn") and "[12:00:00.000] [W] <msg>"
+WARNING_PATTERN = re.compile(r"^\S+ warn(ing)? |^\[[^\]]*\] \[W\] ")
+
 
 class LogMark:
     """
     A line count in one log under the extender's log folder, taken when the mark is made. lines() returns what was
-    written after it, and errors() the lines among those that match a pattern. A missing file raises DevbenchError.
+    written after it, and errors() and warnings() the lines among those that match a pattern. A missing file raises
+    DevbenchError.
     """
 
     def __init__(self, bench: Devbench, file: str) -> None:
@@ -52,3 +57,10 @@ class LogMark:
         """
         regex = re.compile(pattern) if isinstance(pattern, str) else pattern
         return [line for line in self.lines() if regex.search(line)]
+
+    def warnings(self, pattern: str | re.Pattern[str] = WARNING_PATTERN) -> list[str]:
+        """
+        The lines since the mark that pattern finds (re.search). The default matches warning lines in the mods' log
+        format and in devbench's own; errors are not among them.
+        """
+        return self.errors(pattern)

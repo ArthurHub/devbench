@@ -2,7 +2,7 @@
 
 import pytest
 
-from devbench import DevbenchError, close_dialogs, close_menus, open_menus
+from devbench import DevbenchError, close_dialogs, close_menus, message_box_text, open_menus
 
 
 class FakeMenus:
@@ -44,6 +44,21 @@ def test_open_menus_lists_the_names(fake, bench):
     fake.tools["menu"] = FakeMenus([], open_names=["HUDMenu", "PauseMenu"])
 
     assert open_menus(bench) == ["HUDMenu", "PauseMenu"]
+
+
+def test_message_box_text_joins_header_and_body(fake, bench):
+    fake.tools["menu"] = FakeMenus([{"headerText": "Mod", "bodyText": "Welcome"}])
+    assert message_box_text(bench) == "Mod Welcome"
+
+    fake.tools["menu"] = FakeMenus([{"headerText": None, "bodyText": "Installed"}])
+    assert message_box_text(bench) == "Installed"
+
+
+def test_message_box_text_raises_for_a_box_it_cannot_read(fake, bench):
+    fake.tools["menu"] = FakeMenus([None])
+
+    with pytest.raises(DevbenchError, match="currentMessage did not validate"):
+        message_box_text(bench)
 
 
 def test_close_dialogs_answers_until_none_is_open(fake, bench):

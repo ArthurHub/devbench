@@ -21,6 +21,7 @@ from devbench.events import Events
 from devbench.files import Backup, delete_file, read_bytes
 from devbench.games import fallout4
 from devbench.log import LogMark
+from devbench.menus import message_box_text
 from devbench.process import launch, quit_game
 from devbench.testing._config import Config
 from devbench.testing._picture import bmp_to_png
@@ -125,15 +126,19 @@ class _Run:
         self, item: pytest.Item, call: pytest.CallInfo[None]
     ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
         """
-        On the first failed phase of a test that uses the game fixture, while the game is up: take its failure
-        picture and log tail, before its teardown changes what the game shows. A setup failure with the crash of one
-        already captured (a failed session fixture, raised again for each test) takes nothing.
+        On the first failed phase of a test that uses the game fixture, while the game is up: take its open menus,
+        failure picture and log tail, before its teardown changes what the game shows. The menus also go in a
+        "devbench" section, which pytest prints under the failure. A setup failure with the crash of one already
+        captured (a failed session fixture, raised again for each test) takes nothing.
         """
         report = yield
         failures = self.record.failures
         if report.failed and self.game is not None and "game" in item.fixturenames and item.nodeid not in failures:
             if not self._repeated_setup_crash(report):
-                failures[item.nodeid] = self._capture(self.game, item.nodeid)
+                failure = self._capture(self.game, item.nodeid)
+                failures[item.nodeid] = failure
+                if failure.menu_lines():
+                    report.sections.append(("devbench", "\n".join(failure.menu_lines())))
         return report
 
     def _repeated_setup_crash(self, report: pytest.TestReport) -> bool:
@@ -149,10 +154,23 @@ class _Run:
 
     def _capture(self, game: Devbench, nodeid: str) -> Failure:
         """
-        What a failed test leaves: the log lines since it started (when Config.log is set) and a picture of
-        Config.picture. The first picture that cannot be taken says why in its row and a note, and turns pictures off.
+        What a failed test leaves: the open menus and a message box's text, taken first as a box may close on its own;
+        the log lines since it started (when Config.log is set) and a picture of Config.picture. Menus that cannot be
+        read say why in the row, and the next failure tries again. The first picture that cannot be taken says why in
+        its row and a note, and turns pictures off.
         """
         failure = Failure()
+        try:
+            listed = game.tool("menu", action="list")
+            failure.menus = list(listed["openMenus"])
+            if listed.get("messageBoxOpen"):
+                try:
+                    failure.message_box = message_box_text(game)
+                except DevbenchError as error:
+                    failure.message_box = f"(not read: {error})"
+        except (DevbenchError, OSError, KeyError) as error:
+            failure.menus = None
+            failure.menus_error = str(error)
         if self.test_mark is not None and self.test_mark[0] == nodeid:
             try:
                 failure.log = self.test_mark[1].lines()[-_LOG_TAIL:]

@@ -11,10 +11,10 @@ from devbench.console import console, console_number
 from devbench.events import Events
 from devbench.files import Backup, delete_file, list_files, read_bytes, read_text, write_bytes, write_text
 from devbench.log import LogMark
-from devbench.menus import close_dialogs, close_menus, open_menus
+from devbench.menus import close_dialogs, close_menus, message_box_text, open_menus
 from devbench.process import launch, quit_game, restart, wait_gone
 from devbench.vr import Hands
-from devbench.waits import wait_until
+from devbench.waits import wait_for, wait_until
 
 try:
     __version__ = version("devbench-client")
@@ -39,6 +39,7 @@ __all__ = [
     "find_port",
     "launch",
     "list_files",
+    "message_box_text",
     "open_menus",
     "quit_game",
     "read_bytes",
@@ -49,6 +50,7 @@ __all__ = [
     "require_version",
     "restart",
     "wait_gone",
+    "wait_for",
     "wait_until",
     "write_bytes",
     "write_text",
