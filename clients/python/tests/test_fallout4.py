@@ -1,9 +1,29 @@
 """Fallout 4 game setup: a game entered from the main menu or reused, refused elsewhere, and settled."""
 
+import re
+
 import pytest
 
 from devbench import DevbenchError, RequirementError
-from devbench.games.fallout4 import Entered, Settled, at_main_menu_or_in_game, enter_game, in_cell, settle
+from devbench.games.fallout4 import (
+    Entered,
+    Settled,
+    at_main_menu_or_in_game,
+    draw_weapon,
+    enter_game,
+    enter_power_armor,
+    equip,
+    exit_power_armor,
+    in_cell,
+    item_count,
+    leave_power_armor,
+    nearest_power_armor,
+    settle,
+    sheathe_weapon,
+    step_into_power_armor,
+    step_out_of_power_armor,
+    unequip,
+)
 
 # a poll fast enough that a test waits milliseconds
 FAST = {"interval": 0.01}
@@ -205,3 +225,189 @@ def test_in_cell_reads_get_in_cell(fake, bench):
 )
 def test_at_main_menu_or_in_game(menus, ready):
     assert at_main_menu_or_in_game(menus) is ready
+
+
+class FakePlayer:
+    """
+    A scripted player behind the console and player tools. counts maps a form to the item count GetItemCount prints;
+    answers maps a player action to the list of answers it gives in turn (the last one repeats). commands records the
+    console commands, calls the player tool's arguments.
+    """
+
+    def __init__(self, counts=None, answers=None):
+        self.counts = dict(counts or {})
+        self.answers = {action: list(queue) for action, queue in (answers or {}).items()}
+        self.commands = []
+        self.calls = []
+
+    def install(self, fake):
+        fake.tools["console"] = self.console
+        fake.tools["player"] = self.player
+
+    def console(self, args):
+        command = args["command"]
+        self.commands.append(command)
+        verb, _, operand = command.partition(" ")
+        if verb == "player.getitemcount":
+            count = self.counts.get(operand, 0)
+            return {"ok": True, "compiled": True, "captured": True, "lines": [f"GetItemCount >> {count:.2f}"]}
+        if verb == "player.additem":
+            form, count = operand.split()
+            self.counts[form] = self.counts.get(form, 0) + int(count)
+        return {"ok": True, "compiled": True, "captured": True, "lines": []}
+
+    def player(self, args):
+        self.calls.append(args)
+        queue = self.answers[args["action"]]
+        answer = queue.pop(0) if len(queue) > 1 else queue[0]
+        return {"ok": True, "action": args["action"], **answer}
+
+
+def test_equip_adds_one_first_when_the_player_has_none(fake, bench):
+    player = FakePlayer()
+    player.install(fake)
+
+    equip(bench, "0000463F")
+
+    assert player.commands == [
+        "player.getitemcount 0000463F",
+        "player.additem 0000463F 1",
+        "player.equipitem 0000463F",
+    ]
+
+
+def test_equip_a_held_item_adds_none(fake, bench):
+    player = FakePlayer(counts={"0000463F": 2})
+    player.install(fake)
+
+    equip(bench, "0000463F")
+
+    assert player.commands == ["player.getitemcount 0000463F", "player.equipitem 0000463F"]
+
+
+def test_unequip_and_item_count(fake, bench):
+    player = FakePlayer(counts={"0000463F": 3})
+    player.install(fake)
+
+    unequip(bench, "0000463F")
+
+    assert item_count(bench, "0000463F") == 3
+    assert player.commands == ["player.unequipitem 0000463F", "player.getitemcount 0000463F"]
+
+
+@pytest.mark.parametrize("outcome", ["switched", "already"])
+def test_draw_weapon_returns_the_answer_when_drawn(fake, bench, outcome):
+    answer = {"outcome": outcome, "drawn": True, "weaponState": "drawn", "equipped": None}
+    player = FakePlayer(answers={"drawWeapon": [answer]})
+    player.install(fake)
+
+    assert draw_weapon(bench, timeout=5) == {"ok": True, "action": "drawWeapon", **answer}
+    assert player.calls == [{"action": "drawWeapon", "timeoutMs": 5000}]
+
+
+@pytest.mark.parametrize("outcome", ["refused", "notWaited"])
+def test_sheathe_weapon_raises_when_not_sheathed(fake, bench, outcome):
+    answer = {"outcome": outcome, "drawn": True, "weaponState": "sheathing", "note": "the state did not settle"}
+    FakePlayer(answers={"sheatheWeapon": [answer]}).install(fake)
+
+    with pytest.raises(
+        DevbenchError, match=re.escape(f"sheatheWeapon: {outcome}, the weapon is sheathing (the state did not settle)")
+    ) as raised:
+        sheathe_weapon(bench)
+    assert raised.value.tool == "player"
+    assert raised.value.answer["outcome"] == outcome
+
+
+FRAME = {"formId": "0x0001F2A3", "baseFormId": "0x00134C5C", "name": "Power Armor Frame", "distance": 212.5}
+
+
+def test_nearest_power_armor_is_the_first_frame_listed(fake, bench):
+    player = FakePlayer(answers={"findPowerArmor": [{"inPowerArmor": False, "radius": 800, "frames": [FRAME]}]})
+    player.install(fake)
+
+    assert nearest_power_armor(bench, radius=800) == FRAME
+    assert player.calls == [{"action": "findPowerArmor", "radius": 800, "limit": 1}]
+
+
+def test_nearest_power_armor_is_none_without_a_frame(fake, bench):
+    FakePlayer(answers={"findPowerArmor": [{"inPowerArmor": False, "radius": 500, "frames": []}]}).install(fake)
+
+    assert nearest_power_armor(bench) is None
+
+
+def test_enter_power_armor_sends_the_frame_and_returns_the_answer(fake, bench):
+    player = FakePlayer(answers={"enterPowerArmor": [{"outcome": "switched", "inPowerArmor": True}]})
+    player.install(fake)
+
+    answer = enter_power_armor(bench, form_id=FRAME["formId"], timeout=3)
+
+    assert answer["inPowerArmor"]
+    assert player.calls == [{"action": "enterPowerArmor", "formId": FRAME["formId"], "timeoutMs": 3000}]
+
+
+def test_exit_power_armor_raises_when_refused(fake, bench):
+    answer = {"outcome": "refused", "inPowerArmor": True, "note": "a mod can block it"}
+    FakePlayer(answers={"exitPowerArmor": [answer]}).install(fake)
+
+    with pytest.raises(DevbenchError, match=r"exitPowerArmor: refused, inPowerArmor True \(a mod can block it\)"):
+        exit_power_armor(bench)
+
+
+def test_step_into_power_armor_raises_when_not_aimed_with_the_aim(fake, bench):
+    aim = {"matched": False, "yawDeg": 12.0, "passes": []}
+    player = FakePlayer(answers={"stepIn": [{"outcome": "notAimed", "inPowerArmor": False, "aim": aim}]})
+    player.install(fake)
+
+    with pytest.raises(DevbenchError, match=r"stepIn: notAimed, inPowerArmor False, aim \{'matched': False") as raised:
+        step_into_power_armor(bench, radius=300)
+    assert raised.value.answer["aim"] == aim
+    assert player.calls == [{"action": "stepIn", "radius": 300, "timeoutMs": 10000}]
+
+
+def test_step_out_of_power_armor_returns_the_answer(fake, bench):
+    FakePlayer(answers={"stepOut": [{"outcome": "switched", "inPowerArmor": False}]}).install(fake)
+
+    assert step_out_of_power_armor(bench)["outcome"] == "switched"
+
+
+def test_leave_power_armor_steps_out_when_the_exit_is_refused(fake, bench):
+    player = FakePlayer(
+        answers={
+            "exitPowerArmor": [{"outcome": "refused", "inPowerArmor": True}],
+            "stepOut": [{"outcome": "switched", "inPowerArmor": False}],
+        }
+    )
+    player.install(fake)
+
+    assert leave_power_armor(bench)["action"] == "stepOut"
+    assert [call["action"] for call in player.calls] == ["exitPowerArmor", "stepOut"]
+
+
+@pytest.mark.parametrize("outcome", ["switched", "already"])
+def test_leave_power_armor_does_not_step_out_after_an_exit(fake, bench, outcome):
+    player = FakePlayer(answers={"exitPowerArmor": [{"outcome": outcome, "inPowerArmor": False}]})
+    player.install(fake)
+
+    assert leave_power_armor(bench)["outcome"] == outcome
+    assert [call["action"] for call in player.calls] == ["exitPowerArmor"]
+
+
+def test_leave_power_armor_raises_when_stepping_out_fails_too(fake, bench):
+    FakePlayer(
+        answers={
+            "exitPowerArmor": [{"outcome": "refused", "inPowerArmor": True}],
+            "stepOut": [{"outcome": "refused", "inPowerArmor": True}],
+        }
+    ).install(fake)
+
+    with pytest.raises(DevbenchError, match="stepOut: refused"):
+        leave_power_armor(bench)
+
+
+def test_leave_power_armor_raises_a_failed_exit_other_than_refused(fake, bench):
+    player = FakePlayer(answers={"exitPowerArmor": [{"outcome": "notWaited", "inPowerArmor": True}]})
+    player.install(fake)
+
+    with pytest.raises(DevbenchError, match="exitPowerArmor: notWaited"):
+        leave_power_armor(bench)
+    assert [call["action"] for call in player.calls] == ["exitPowerArmor"]

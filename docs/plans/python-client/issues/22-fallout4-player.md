@@ -1,6 +1,6 @@
 # 22 Fallout 4 player helpers
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: [../spec.md](../spec.md). Source: the flashlight suite's `Loadout`, without the mod's headgear read.

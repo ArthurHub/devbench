@@ -187,6 +187,28 @@ first button, and gives up after `limit` seconds with `quiet` False. A game alre
 that a modal blocked raises `DevbenchError`. The cell is an interior cell's editor ID; an unknown one raises
 `DevbenchError`. Nothing is printed: `dialogs` holds what each closed box said.
 
+Set up what the player wears and holds. Items go through the console; the weapon and power armor go through
+devbench's `player` tool, which waits for the engine state:
+
+```python
+fallout4.equip(bench, "0000463F")  # adds one first when the player has none
+fallout4.unequip(bench, "0000463F")
+fallout4.item_count(bench, "0000463F")
+fallout4.draw_weapon(bench, timeout=10)  # what is equipped, fists when nothing
+fallout4.sheathe_weapon(bench)
+
+frame = fallout4.nearest_power_armor(bench, radius=500)  # { formId, baseFormId, name, distance } or None
+fallout4.enter_power_armor(bench, form_id=frame["formId"])  # at once: setup, no animation
+fallout4.exit_power_armor(bench)
+fallout4.step_into_power_armor(bench, form_id=frame["formId"])  # VR: aim and press A, the game's own walk-in
+fallout4.step_out_of_power_armor(bench)  # VR: the exit gesture
+fallout4.leave_power_armor(bench)  # the exit, or stepping out when a mod refuses it
+```
+
+Each switch returns the `player` tool's answer when its outcome is `switched` or `already`; any other outcome
+(`refused`, `notAimed`, ...) raises `DevbenchError` with the outcome, the weapon or power armor state and the tool's
+note, and the answer on `error.answer`. `equip` and `unequip` return once the command ran: wait on what your mod sees.
+
 Launch, quit and restart the game. The client knows nothing about MO2, Steam or SteamVR: `launch` runs the command you
 give it, the same one you would type in a terminal:
 
