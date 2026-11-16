@@ -17,13 +17,17 @@ from urllib.parse import parse_qs, urlsplit
 # sent as is, as text/plain, to stand for a body that is not JSON.
 ToolHandler = Callable[[dict[str, Any]], Any]
 
+# A tool handler returning this closes the connection without answering, as a game dying mid-call does.
+HANG_UP = object()
+
 
 class FakeDevbench:
     """
     Answers /api/tool/<name> and the /api/tools listing from tools, /api/health from health and
     /api/events?since=<seq> from events, on a free
     port of 127.0.0.1 with HTTP/1.1 keep-alive. calls records each request as (method, path, body); connections
-    counts the TCP connections accepted. drop_next() closes the socket after the next answer, as a restarting game does.
+    counts the TCP connections accepted. drop_next() closes the socket after the next answer, as a restarting game does;
+    stop() stops listening, as a game that quit.
     """
 
     def __init__(self) -> None:
@@ -33,6 +37,7 @@ class FakeDevbench:
         self.calls: list[tuple[str, str, Any]] = []
         self.connections = 0
         self._drop = False
+        self._stopped = False
         self._lock = threading.Lock()
         handler = type("Handler", (_Handler,), {"fake": self})
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -55,9 +60,20 @@ class FakeDevbench:
         with self._lock:
             self._drop = True
 
-    def close(self) -> None:
+    def stop(self) -> None:
+        """
+        Stop listening, as a game that quit: new connections are refused. Safe to call again, and from a tool
+        handler (shutdown waits for the serving thread, not the handler's).
+        """
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
         self._server.shutdown()
         self._server.server_close()
+
+    def close(self) -> None:
+        self.stop()
         self._thread.join()
 
     def _take_drop(self) -> bool:
@@ -114,7 +130,11 @@ class _Handler(BaseHTTPRequestHandler):
         if handler is None:
             self._answer((404, {"ok": False, "error": f"unknown tool {name}"}))
         else:
-            self._answer(handler(body))
+            result = handler(body)
+            if result is HANG_UP:
+                self.close_connection = True
+            else:
+                self._answer(result)
 
     def _answer(self, result: Any) -> None:
         """Send a scripted result: an answer (200) or (status, answer); bytes go out as plain text."""

@@ -54,18 +54,18 @@ A mod keeps its own actions (`flashlight.py`, `menu.py`), loadout, baseline sett
 
 ## Client API (summary; tickets have the detail)
 
-| Module                                | Holds                                                                                                                                    |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `devbench.client`                     | `find_port(game, vr)`, `Devbench(port)`, `tool()`, `health()`, `ModTool` (a mod's own tool by action), `DevbenchError`                   |
-| `devbench.checks`                     | `require(game, vr)`, `require_tools`, `require_actions`; raise `RequirementError`                                                        |
-| `devbench.waits`                      | `wait_until(check, timeout, interval, what)`                                                                                             |
-| `devbench.events`                     | `Events` (from now on; `all(topic)`, `wait(topic, where)`)                                                                               |
-| `devbench.console` / `devbench.menus` | `console`, `console_number`; `open_menus`, `close_dialogs`, `close_menus`                                                                |
-| `devbench.files`                      | read/write bytes and text, list, delete; `Backup(globs, folder)` with a crash-safe manifest                                              |
-| `devbench.log`                        | a line mark, the lines since it, errors since it                                                                                         |
-| `devbench.vr`                         | `Hands`: a held pose as an owner, place a hand at a world point, press/tap/long press, release                                           |
-| `devbench.games.fallout4`             | `enter_game(cell="QASmoke")`, `settle()`, `in_cell()`                                                                                    |
-| `devbench.process`                    | `quit_game` (`qqq`, wait for the port to go), `launch(command)` (run the user's command, wait for devbench and the main menu), `restart` |
+| Module                                | Holds                                                                                                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devbench.client`                     | `find_port(game, vr)`, `Devbench(port)`, `tool()`, `health()`, `ModTool` (a mod's own tool by action), `DevbenchError`                                     |
+| `devbench.checks`                     | `require(game, vr)`, `require_tools`, `require_actions`; raise `RequirementError`                                                                          |
+| `devbench.waits`                      | `wait_until(check, timeout, interval, what)`                                                                                                               |
+| `devbench.events`                     | `Events` (from now on; `all(topic)`, `wait(topic, where)`)                                                                                                 |
+| `devbench.console` / `devbench.menus` | `console`, `console_number`; `open_menus`, `close_dialogs`, `close_menus`                                                                                  |
+| `devbench.files`                      | read/write bytes and text, list, delete; `Backup(globs, folder)` with a crash-safe manifest                                                                |
+| `devbench.log`                        | a line mark, the lines since it, errors since it                                                                                                           |
+| `devbench.vr`                         | `Hands`: a held pose as an owner, place a hand at a world point, press/tap/long press, release                                                             |
+| `devbench.games.fallout4`             | `enter_game(cell="QASmoke")`, `settle()`, `in_cell()`                                                                                                      |
+| `devbench.process`                    | `quit_game` (`qqq`, wait for the process to exit), `wait_gone`, `launch(command)` (run the user's command, wait for devbench and the main menu), `restart` |
 
 Launching runs a command the user gives (`DEVBENCH_LAUNCH` or `--devbench-launch`); the client knows nothing about
 MO2, Steam or SteamVR, and the command never lives in a mod's checked-in conftest.
