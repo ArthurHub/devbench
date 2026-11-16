@@ -16,11 +16,15 @@ Two build systems, one per game. `src/core/` is buildsystem-neutral and compiled
   cmake --build --preset fallout4-vs2026 --target devbench
   ```
   Set `FalloutPluginTargets` (`;`-separated game `Data` dirs) to deploy on build.
+- **Fallout release** (fork only): pushing a `fo4-vX.Y.Z` tag on `main` runs `release-fallout.yaml` (CI build with
+  the `fallout4-vs2022` preset via `_build-fallout.yaml`, a draft GitHub Release with the F4SE archive). The fork's
+  own numbering is the displayed version only (`ping`, the Python package); version files and `GetBuildNumber()` stay
+  upstream's. Details in `docs/FALLOUT4.md` "Releasing". Upstream's `release.yaml` / `_build.yaml` are left as is.
 - **Skyrim**: xmake, `xmake` (default mode `releasedbg`). `SkyrimPluginTargets` deploys.
 - **Unit tests** (host-independent, no game, no extender): `xmake build devbench-tests && xmake run devbench-tests`. Only xmake builds them; CMake has no test target. The runner has no filter, it runs every `TEST_CASE` (self-registering, `tests/test_framework.h`). New pure-logic TUs must be added by hand to the `devbench-tests` file list in `xmake.lua`.
 - **HTTP tests** (Skyrim, against a running game; skipped when none is reachable): `pytest tests/http -v`, `DEVBENCH_URL` picks the port.
 - **Bridge** (`bridge/`, TypeScript stdio MCP proxy that survives game restarts): `npm --prefix bridge run build`, `npm --prefix bridge run lint`.
-- **Python client** (`clients/python/`, distribution `devbench-client`, import `devbench`, MIT; plan in `docs/plans/python-client/`): `pip install -e clients/python && pytest clients/python`. Unit tests run against the fake server in `clients/python/tests/fake_devbench.py`, no game. The `devbench` package must never import pytest (only the opt-in `devbench.testing` plugin may); a test checks it. The plugin (`src/devbench/testing/`, configured by a mod's `DEVBENCH = Config(...)`) is tested with pytester in-process sessions against that fake. Version comes from the git tag (setuptools-scm).
+- **Python client** (`clients/python/`, distribution `devbench-client`, import `devbench`, MIT; plan in `docs/plans/python-client/`): `pip install -e clients/python && pytest clients/python`. Unit tests run against the fake server in `clients/python/tests/fake_devbench.py`, no game. The `devbench` package must never import pytest (only the opt-in `devbench.testing` plugin may); a test checks it. The plugin (`src/devbench/testing/`, configured by a mod's `DEVBENCH = Config(...)`) is tested with pytester in-process sessions against that fake. Version comes from the fork's `fo4-v*` tags (setuptools-scm, the same `git describe --match fo4-v*` as `cmake/fork-version.cmake`).
 - **Formatting**: `pre-commit run --files <changed files>` (clang-format for C++, prettier for Markdown/JSON, eslint for the bridge, ruff for `clients/python/` only).
 
 Default ports: Skyrim SE 8920, Skyrim VR 8921, Fallout 4 8930, Fallout 4 VR 8931. The `devbench-fo4vr` MCP server in this environment is a live FO4VR instance through the bridge; use it to check changes in game.

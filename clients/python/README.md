@@ -5,11 +5,13 @@ Python client for devbench's REST port: call a running game's tools from a scrip
 
 ## Install
 
-From a git tag, in a mod's `requirements.txt` (pick the remote and the tag):
+From a release tag of the ArthurHub fork, in a mod's `requirements.txt`:
 
 ```
-devbench-client @ git+https://github.com/ArthurHub/devbench@v1.15.0#subdirectory=clients/python
+devbench-client @ git+https://github.com/ArthurHub/devbench@fo4-v1.0.0#subdirectory=clients/python
 ```
+
+The package's version is the tag's (`1.0.0`), the same version the matching devbench DLL reports in `ping`.
 
 From a local checkout, editable, when working on devbench and a mod together:
 

@@ -1,6 +1,6 @@
 # 17 Release from the fork
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 12
 
 Spec: [../spec.md](../spec.md).
@@ -32,16 +32,18 @@ wait for alandtse or rollingrock.
   commit is on `main`.
 - **Workflow files.** New `release-fallout.yaml` (gated on `github.repository_owner == 'ArthurHub'`) and a reusable
   `_build-fallout.yaml`; `release.yaml`, `_build.yaml` and `.releaserc` stay as upstream has them. The Fallout build
-  runs at release only, not on every push.
+  runs at release only, not on every push; `_build-fallout.yaml` also takes a manual dispatch for a trial build
+  before tagging. The release also checks the Python client resolves the tag to the same version.
 - **CI build.** The `fallout4-vs2022` preset (v143) with vcpkg and the `extern/CommonLibF4` submodule; local work keeps
   vs2026. Confirm the runner's toolchains when implementing.
 - **Archive.** `devbench-fo4-vX.Y.Z.7z`: `F4SE/Plugins/devbench.dll` + `.pdb`, `F4SE/Plugins/devbench/devbench-bridge.exe`.
   No Skyrim recordings, no config file, no `DevBenchAPI.h`. One archive serves Fallout 4 and FO4VR.
 - **Release.** Created as a draft with the archive attached; notes are the tag's annotation if it has one, else the
   commit subjects since the previous `fo4-v*` tag. Publishing the draft is manual.
-- **Python.** `pyproject.toml` gets a `tag_regex` and a describe command matching `fo4-v*`; `python-client.yaml` drops
-  the rollingrock tag fetch. Until the first tag, setuptools-scm gives `0.1.devN`, which passes the `0.0.0` check.
-  Install stays the `git+…@<tag>#subdirectory=clients/python` line: no wheel on the Release, no PyPI.
+- **Python.** `pyproject.toml` sets `scm.git.describe_command` to the same `--match fo4-v*` describe (needs
+  setuptools-scm 9; 8.x rejects the table). No `tag_regex`: setuptools-scm 10 deprecates it and the default regex
+  already strips `fo4-`. `python-client.yaml` drops the rollingrock tag fetch. Until the first tag, setuptools-scm
+  gives `0.0.1.devN`, which passes the `0.0.0` check. Install stays the `git+…@<tag>#subdirectory=clients/python` line: no wheel on the Release, no PyPI.
 - **Out of scope.** Nexus (later, a job after the Release reusing `nexus-upload.yaml`), the bridge's own `0.1.0`
   version, an `apiBuild` field in `ping`.
 
@@ -56,6 +58,11 @@ On the `python-client` branch, one staged commit at a time:
    the spec's and client README's install line move to `@fo4-v1.0.0`.
 
 Then `main` fast-forwards to `python-client` and `fo4-v1.0.0` is pushed on `main`.
+
+Done (2026-11-16): the four commits. Checked locally: the CMake string and setuptools-scm agree on a scratch clone
+(on the tag, past it, dirty); the `fallout4-vs2026` configure honours `DEVBENCH_VERSION` and keeps `MAJOR` / `MINOR`
+upstream's; the client's CI steps pass (285 tests). Not yet run on GitHub: neither workflow, nor actionlint. Left:
+fast-forward `main`, optionally the trial build, push the tag, the live check below.
 
 ## Acceptance
 

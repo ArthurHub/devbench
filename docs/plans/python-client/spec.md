@@ -25,10 +25,11 @@ A mod keeps its own actions (`flashlight.py`, `menu.py`), loadout, baseline sett
 - **Lives in** `clients/python/`, `src/` layout. Licensed MIT (own `LICENSE` in that folder), like `include/DevBenchAPI.h`.
 - **Distribution** `devbench-client`, import package `devbench`; the pytest plugin is `devbench.testing`.
 - **Published by git tag**, no PyPI. A mod's requirements line picks the remote and the tag:
-  `devbench-client @ git+https://github.com/ArthurHub/devbench@v1.15.0#subdirectory=clients/python`.
-  The fork or upstream is each mod's choice. Local work on both: `pip install -e <devbench>/clients/python`.
-- **Version comes from the git tag** (setuptools-scm with `root = "../.."`), so the package and the DLL share a number
-  and nothing is bumped by hand.
+  `devbench-client @ git+https://github.com/ArthurHub/devbench@fo4-v1.0.0#subdirectory=clients/python`.
+  Local work on both: `pip install -e <devbench>/clients/python`.
+- **Version comes from the git tag** (setuptools-scm with `root = "../.."`, describing `--match fo4-v*`), so the
+  package and the DLL's displayed version share a number and nothing is bumped by hand. The fork's release scheme is
+  ticket 17.
 - **Dependencies**: `requests` is not needed; the client keeps the `http.client` kept-alive connection the suites use
   (a connection per call exhausts local ports when a test polls). `pytest` is a plain dependency (the plugin needs it;
   the client does not import it). Image comparison deps, if they ever move in, go behind a `[visual]` extra.
