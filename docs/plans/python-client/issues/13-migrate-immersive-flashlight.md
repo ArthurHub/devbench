@@ -10,8 +10,8 @@ Spec: [../spec.md](../spec.md). Work is in the `F4VR-ImmersiveFlashlight` repo, 
 Replace `devbench.py`, `backup.py`, `report.py` and the shared conftest code with the package; `controllers.py` uses
 `Hands`; the conftest keeps the mod's fixtures (`loadout`, `flashlight`, `weapon`) and defines `DEVBENCH`. The
 requirements line pins a devbench commit on the fork
-(`git+https://github.com/ArthurHub/devbench@<sha>#subdirectory=clients/python`): the fork has no tags until ticket 17,
-which moves the pin to a tag.
+(`git+https://github.com/ArthurHub/devbench@<sha>#subdirectory=clients/python`): the fork has no tags until ticket 17.
+Once `fo4-v1.0.0` is released, the pin moves to `@fo4-v1.0.0`.
 
 ## Acceptance
 
