@@ -5,6 +5,7 @@
 #include "core/Host.h"
 #include "core/Json.h"
 #include "core/Log.h"
+#include "core/MainThread.h"
 #include "core/tools/Memory.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <format>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Tools that need nothing from the game. They register identically on every
@@ -524,6 +526,37 @@ namespace dvb::tools
 
 			throw ToolError(400, "files: unknown action '" + action + "' (list|read|write|delete)");
 		}
+
+		// the longest quit watchdog: ten minutes
+		constexpr std::int64_t kMaxKillAfterMs = 600000;
+
+		/**
+		 * Asks the game to quit on the main thread and answers before it goes down. With
+		 * killAfterMs, a detached thread terminates the process if it still runs by then:
+		 * a shutdown that hangs has usually stopped this listener, so no later call could.
+		 */
+		json QuitHandler(const json& a_args, const ToolContext&)
+		{
+			const json& raw = a_args.contains("killAfterMs") ? a_args["killAfterMs"] : json(0);
+			if (!raw.is_number_integer() || raw.get<std::int64_t>() < 0 || raw.get<std::int64_t>() > kMaxKillAfterMs)
+				throw ToolError(400, std::format("quit: 'killAfterMs' must be an integer from 0 to {}", kMaxKillAfterMs));
+			const auto killAfterMs = raw.get<std::int64_t>();
+
+			const auto refused = MainThread::RunAndWait([]() -> json { return host::RequestQuit(); }).get<std::string>();
+			if (!refused.empty())
+				throw ToolError(500, "quit: " + refused);
+
+			if (killAfterMs > 0) {
+				std::thread([killAfterMs] {
+					std::this_thread::sleep_for(std::chrono::milliseconds(killAfterMs));
+					dlog::warn("quit: still running {} ms after the quit; terminating the process", killAfterMs);
+					::TerminateProcess(::GetCurrentProcess(), 1);
+				}).detach();
+			}
+			const auto pid = static_cast<int>(::GetCurrentProcessId());
+			dlog::info("quit: requested (pid {}, killAfterMs {})", pid, killAfterMs);
+			return json{ { "pid", pid }, { "quitting", true }, { "killAfterMs", killAfterMs } };
+		}
 	}
 
 	void SetAllowMemoryWrites(bool a_allow)
@@ -633,6 +666,24 @@ namespace dvb::tools
 				{ "required", json::array({ "action", "root", "path" }) }
 			};
 			a_registry.Register(std::move(files), &FilesHandler);
+		}
+
+		{
+			ToolDescriptor quit;
+			quit.name = "quit";
+			quit.description =
+				"Quit the game to the desktop through the engine's own shutdown, the path the console's qqq "
+				"takes: no save, no prompt. Answers { pid, quitting: true, killAfterMs } at once; the game goes "
+				"down on a later frame, so this port stops answering soon after. To know it is gone, wait for "
+				"process 'pid' to exit, not for the port: shutdown takes seconds and can hang. killAfterMs > 0 "
+				"arms a watchdog that terminates the process if it still runs that many ms after the call, for "
+				"a shutdown that hangs (it skips whatever cleanup was left); 0 (default) never kills.";
+			quit.inputSchema = json{
+				{ "type", "object" },
+				{ "properties", json{
+									{ "killAfterMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxKillAfterMs }, { "description", "terminate the process if it still runs this long after the call; default 0, never" } } } } }
+			};
+			a_registry.Register(std::move(quit), &QuitHandler);
 		}
 	}
 }

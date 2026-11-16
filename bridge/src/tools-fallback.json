@@ -955,6 +955,21 @@
         "required": ["action", "root", "path"],
         "type": "object"
       }
+    },
+    {
+      "name": "quit",
+      "description": "Quit the game to the desktop through the engine's own shutdown, the path the console's qqq takes: no save, no prompt. Answers { pid, quitting: true, killAfterMs } at once; the game goes down on a later frame, so this port stops answering soon after. To know it is gone, wait for process 'pid' to exit, not for the port: shutdown takes seconds and can hang. killAfterMs > 0 arms a watchdog that terminates the process if it still runs that many ms after the call, for a shutdown that hangs (it skips whatever cleanup was left); 0 (default) never kills.",
+      "inputSchema": {
+        "properties": {
+          "killAfterMs": {
+            "description": "terminate the process if it still runs this long after the call; default 0, never",
+            "maximum": 600000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     }
   ]
 }

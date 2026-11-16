@@ -22,7 +22,8 @@ with the Skyrim build. See [MULTIGAME.md](MULTIGAME.md) for how the two fit toge
 > gestures (see "`input`, the short version"); `pose` replaced Skyrim's calibrated `reach`
 > there. `player` moved the player in and out of power
 > armor live the same day, and drew and sheathed the weapon (a gun and bare fists) live on
-> 2026-11-11. `measure`, `log` and `files` have no recorded
+> 2026-11-11. `quit` quit FO4VR from the main menu and from in game on 2026-11-16 (the
+> process gone 15 s and 3 s after the call); the queued `qqq` quit it from in game the same day. `measure`, `log` and `files` have no recorded
 > live run yet. Flat Fallout 4 uses the same DLL but has never been loaded.
 
 ## Install
@@ -109,10 +110,11 @@ Reachable over both MCP (`tools/call` on `/mcp`) and REST (`POST /api/tool/<name
 | `rendertarget` | `action='list'` every render target the engine owns, plus the threading facts below. `'stats'` (copy one back, report `{ nonFinitePct, darkPct, meanLuma, maxChannel }`) and `'dump'` (also write a BMP) are **disabled** and answer 501. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `measure`      | Frame-time percentiles over a window: `{ fps, meanMs, minMs, p50Ms, p95Ms, p99Ms, maxMs, frames, missedTransitions }`. No engine hook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `files`        | `list` / `read` / `write` / `delete` files under `Data/` as the game sees it (a mod manager's virtual files included) or `Documents/My Games/Fallout4[VR]/`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `quit`         | Quit to the desktop through the engine's own shutdown, answering `{ pid, quitting, killAfterMs }` first. `killAfterMs` arms a watchdog for a shutdown that hangs. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `input`        | VR only. Synthetic HMD and controllers at the OpenVR boundary, the same `vrTrackedSet` contract as Skyrim's `input` tool. `sequence` plays timestamped frames of the whole tracked set, `press` holds named buttons over it, `pose` places and holds the head and hands at nodes or world points without calibrating. Skyrim's `reach` is not here. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `player`       | Power armor: `status` (`inPowerArmor`, the engine's own answer), `findPowerArmor` (frames in the player's cell, nearest first), `enterPowerArmor` / `exitPowerArmor` (instant setup through the console), `stepIn` / `stepOut` (VR: the transition a player makes, through the controllers). Weapon: `weapon` (`drawn`, `weaponState`, `equipped`), `drawWeapon` / `sheatheWeapon` (the engine's own call). Each switch waits for the engine state. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
-`memory`, `log`, `files`, `rendertarget` and `measure` are game-agnostic — they live in the core and
+`memory`, `log`, `files`, `quit`, `rendertarget` and `measure` are game-agnostic — they live in the core and
 work identically on any platform that fills the relevant seam.
 
 ## `rendertarget`, the short version
@@ -270,6 +272,29 @@ irm "http://127.0.0.1:8931/api/tool/files" -Method Post -Body '{"action":"write"
   a missing one answers `deleted: false`.
 - It runs on the listener thread, so it answers at the main menu and while the game is
   stalled. Files are capped at 16 MB each way.
+
+## `quit`, the short version
+
+```powershell
+# quit, and kill the game if it is still running 60 s later
+irm "http://127.0.0.1:8931/api/tool/quit" -Method Post -Body '{"killAfterMs":60000}' -ContentType application/json
+# { "killAfterMs": 60000, "ok": true, "pid": 31964, "quitting": true }
+```
+
+- **It answers first.** The tool sets `Main::quitGame` on the main thread, the flag the
+  console's `qqq` sets, and replies; the engine's own shutdown runs on a later frame. The
+  port then stops answering, but the process takes seconds more to exit, so wait for `pid`
+  to exit rather than for the port to close. The Python client's `devbench.process.quit_game`
+  does that.
+- **The offset is checked by content.** `quitGame` is at `Main+0x24` in CommonLibF4's flat
+  layout. Before writing it, the tool checks that the eight flags at `+0x24` each read 0 or 1
+  and that `Main::hwnd` is a window, and answers `500` naming the byte otherwise. On FO4VR
+  1.2.72 (2026-11-16) the flags read `0 0 0 1 1 0 0 0` at the main menu (`gameActive` and
+  `onIdle` set) and in game, and `hwnd` was a window.
+- **`killAfterMs` is the only way to end a hung shutdown from inside.** A shutdown that
+  hangs has usually stopped this listener already, so no later call could reach it. With
+  `killAfterMs` > 0 a thread started by the call terminates the process if it still runs
+  that long after; `0` (the default) never kills.
 
 ## `nodes`, the short version
 

@@ -40,6 +40,7 @@ const FAMILIES = {
       "mcp_bridge_setup",
       "ping",
       "files",
+      "quit",
     ]),
   },
   fallout4: {
@@ -57,6 +58,7 @@ const FAMILIES = {
       "files",
       "input",
       "player",
+      "quit",
     ]),
   },
 };
