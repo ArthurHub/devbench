@@ -472,6 +472,15 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"pose","owner
   controller whatever the aim, but the body's hand hangs about 6 units behind it along the
   controller: a hand raised to the head is placed tilted back (pitch 123, yaw 14 for the
   left, as recorded in the headset), so it hangs beside the head instead of in the face.
+  `yawIn` replaces `yaw` with a turn toward the body for either hand (tracking yaw `-yawIn`
+  on the left, `+yawIn` on the right), so one recorded aim fits both hands. Like `yaw` it is
+  in tracking space: the two hands mirror around the body's forward, which is the head's only
+  at head yaw 0.
+- **Head offset.** A world hand takes `headOffset: [outward, forward, up]`, world units along
+  the HMD node's axes (its rotation rows, pitch included) read after the head turns, outward
+  toward that hand's own side: one offset puts each hand at its mirror image around the head.
+  It resolves once into the hand's `target`, which corrections then chase. A node hand
+  refuses it (400).
 - **The head only turns**, around the eye point, so the HMD node does not move between
   placements: `head.pitch` (negative looks down) and `head.yaw` (positive turns left), in
   tracking degrees, the yaw relative to the ready forward. There is no head position. A body
@@ -536,6 +545,16 @@ HMD node's forward row:
   shared six, `reach` / `reachStatus` / `reachStop` answer 400 ("use pose"), `lookAt` at
   the left hand on its way to `Chest` still re-aimed and landed 0.004 units off in 1.6 s,
   and a `press` over the hold worked as its owner and answered 409 for another.
+
+`headOffset` and `yawIn`, checked live on FO4VR (2026-11-16, FRIK): with the head at pitch
+−40, yaw 15, the left hand and then the right to one world point with `headOffset [12, 5, -4]`,
+`yawIn 25`, `pitch 20`:
+
+- `hmdNode`'s rotation rows are right, forward, up (forward's z −sin 40°, up's z cos 40°);
+- each wand landed 0.005 units from its target with no correction; projected on the head's
+  axes their offsets from the point were (−12.00, 4.99, −4.00) and (12.00, 5.00, −4.00);
+- the answer's tracking yaws were −25 and +25, and both wands turned toward the body, at
+  exactly ±25° from the body's forward (the fitted turn, 11.68°) and up by sin 20°.
 
 Checked live on FO4VR 1.2.72 (2026-11-10, FRIK, F4VR Common Framework and FO4VRTools
 installed). The `reach` runs are history: they are what showed the map is simpler, and

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/HandednessLogic.h"
+#include "core/PoseLogic.h"
 #include "core/ReachLogic.h"
 
 #include <cstdint>
@@ -60,6 +61,9 @@ namespace dvb::vrhost
 	PoseStance ReadPoseStance();
 	/// World position of the in-game HMD node, the anchor Pose maps tracking space through.
 	ReachLogic::Vec3 HmdWorld();
+	/// The in-game HMD node's world axes (its rotation rows: right, forward, up), the frame a
+	/// Pose head offset is given in. Throws ToolError(501) where Pose is not available.
+	PoseLogic::HeadAxes HmdAxes();
 
 	/// The game's handedness: true while the left controller is the primary hand; nullopt on a
 	/// platform that does not report it (the handedness action and logical hand names 501 there).

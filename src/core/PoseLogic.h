@@ -41,12 +41,26 @@ namespace dvb::PoseLogic
 		std::string node;
 		/// Which skeleton to search for node: "player" (body) or "firstPerson"; empty = the
 		/// platform's default order.
-		std::string            root;
-		double                 front{ 0 };
-		Vec3                   offset;
-		Vec3                   world;
+		std::string root;
+		double      front{ 0 };
+		Vec3        offset;
+		Vec3        world;
+		/// A world target's offset along the head's axes: outward (toward this hand's side),
+		/// forward, up, in world units.
+		std::optional<Vec3>    headOffset;
 		std::optional<HandAim> aim;
 	};
+
+	/// The head's axes in the world (the HMD node's rotation rows), each a unit vector.
+	struct HeadAxes
+	{
+		Vec3 right;
+		Vec3 forward;
+		Vec3 up;
+	};
+
+	Vec3   HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, bool a_right);
+	double YawInToTracking(double a_yawInDeg, bool a_right);
 
 	/// What head.lookAt aims at: a held or placed hand, the midpoint of both, a player node, or a
 	/// world point. It resolves once into head angles; the hold keeps the angles, not the target.

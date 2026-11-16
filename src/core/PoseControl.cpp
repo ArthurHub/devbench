@@ -129,11 +129,22 @@ namespace dvb::PoseControl
 				{ PL::HandSample{ a_held.pose.left, a_reading.left }, PL::HandSample{ a_held.pose.right, a_reading.right } });
 		}
 
-		/// A node or world placement as a world point, read on the main thread.
-		RL::Vec3 WorldTarget(const PL::HandPlacement& a_placement)
+		/**
+		 * A node or world placement as a world point, read on the main thread. A head offset
+		 * reads the HMD's axes now, so it follows the head as posed.
+		 */
+		RL::Vec3 WorldTarget(const PL::HandPlacement& a_placement, bool a_right)
 		{
-			if (a_placement.kind == PL::HandPlacement::Kind::kWorld)
-				return a_placement.world;
+			if (a_placement.kind == PL::HandPlacement::Kind::kWorld) {
+				if (!a_placement.headOffset)
+					return a_placement.world;
+				const json         axes = dvb::MainThread::RunAndWait([]() -> json {
+					const auto a = vrhost::HmdAxes();
+					return json{ { "right", Vec3Json(a.right) }, { "forward", Vec3Json(a.forward) }, { "up", Vec3Json(a.up) } };
+				});
+				const PL::HeadAxes head{ Vec3From(axes.at("right")), Vec3From(axes.at("forward")), Vec3From(axes.at("up")) };
+				return PL::HeadOffsetWorld(a_placement.world, *a_placement.headOffset, head, a_right);
+			}
 			const json     result = dvb::MainThread::RunAndWait([a_placement]() -> json {
 				const double yaw = vrhost::PlayerYaw();
 				return json{ { "node", Vec3Json(vrhost::ReachNodeWorld(a_placement.node, a_placement.root)) }, { "yaw", yaw } };
@@ -150,7 +161,7 @@ namespace dvb::PoseControl
 				return a_right ? a_reading.right : a_reading.left;
 			if (a_placement->kind == PL::HandPlacement::Kind::kReady)
 				return PL::WorldFor(a_theta, HmdTracking(a_held), a_reading.hmd, PL::ReadyHand(a_right, a_held.pose.eyeHeight), a_held.unitsPerMeter);
-			return WorldTarget(*a_placement);
+			return WorldTarget(*a_placement, a_right);
 		}
 
 		/**
@@ -304,14 +315,14 @@ namespace dvb::PoseControl
 		if (mapped) {
 			const Reading reading = Read();
 			theta = Turn(held, reading);
-			const auto place = [&](const std::optional<PL::HandPlacement>& a_placement, RL::Vec3& a_tracking, std::optional<RL::Vec3>& a_target) {
+			const auto place = [&](const std::optional<PL::HandPlacement>& a_placement, bool a_right, RL::Vec3& a_tracking, std::optional<RL::Vec3>& a_target) {
 				if (!a_placement || a_placement->kind == PL::HandPlacement::Kind::kReady)
 					return;
-				a_target = WorldTarget(*a_placement);
+				a_target = WorldTarget(*a_placement, a_right);
 				a_tracking = PL::TrackingFor(theta, HmdTracking(held), reading.hmd, *a_target, held.unitsPerMeter);
 			};
-			place(request.left, to.left, targetLeft);
-			place(request.right, to.right, targetRight);
+			place(request.left, false, to.left, targetLeft);
+			place(request.right, true, to.right, targetRight);
 		}
 		if (request.left && request.left->kind == PL::HandPlacement::Kind::kReady)
 			to.left = PL::ReadyHand(false, held.pose.eyeHeight);

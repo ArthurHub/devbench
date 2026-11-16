@@ -43,3 +43,10 @@ _Avoid_: reach (which calibrates), stance
 
 **Ready pose**:
 The Pose a held Tracked set starts in and returns to: the head pitched down and both hands in front at chest height, in view.
+
+**Head offset**:
+A Pose world target moved along the head's axes as posed (outward, forward, up), outward being toward the placed hand's own side, so one offset puts either hand at its mirror image around the head.
+
+**Inward yaw**:
+A Controller's yaw given as a turn toward the body, the same for either hand, so one recorded aim fits the left and the right Controller. It is in tracking space, so the hands mirror around the body's forward, not the head's.
+_Avoid_: mirrored yaw

@@ -154,4 +154,15 @@ namespace dvb::vrhost
 		const auto& t = FindPlayerNode("hmdNode")->world.translate;
 		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
+
+	/**
+	 * The HMD node's world rotation rows as right, forward, up: each row is one of the node's
+	 * axes in the world, the frame the nodes tool's rot rows show.
+	 */
+	PoseLogic::HeadAxes HmdAxes()
+	{
+		const auto& m = FindPlayerNode("hmdNode")->world.rotate;
+		const auto  row = [&](int a_r) { return ReachLogic::Vec3{ m.entry[a_r][0], m.entry[a_r][1], m.entry[a_r][2] }; };
+		return PoseLogic::HeadAxes{ row(0), row(1), row(2) };
+	}
 }

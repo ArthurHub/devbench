@@ -84,6 +84,54 @@ TEST_CASE("ParsePose takes a placed hand's controller pitch and yaw, the ready a
 	CHECK(!Parse(R"({"hands":{"left":{"world":[0,0,0],"yaw":"in"}}})", error).has_value());
 }
 
+TEST_CASE("ParsePose takes a world hand's head offset and an inward yaw per side")
+{
+	std::string error;
+	const auto  request = Parse(R"({"hands":{"left":{"world":[1,2,3],"headOffset":[4,5,6],"yawIn":20},"right":{"world":[1,2,3],"headOffset":[4,5,6],"yawIn":20}}})", error);
+	CHECK(request.has_value());
+	CHECK(NearVec(*request->left->headOffset, Vec3{ 4, 5, 6 }));
+	CHECK(NearVec(*request->right->headOffset, Vec3{ 4, 5, 6 }));
+	// toward the body: the left hand turns right (negative tracking yaw), the right one left
+	CHECK(Near(request->left->aim->yawDeg, -20.0));
+	CHECK(Near(request->right->aim->yawDeg, 20.0));
+	CHECK(Near(request->left->aim->pitchDeg, kHandPitchDeg));
+
+	const auto plain = Parse(R"({"hands":{"left":{"world":[0,0,0]}}})", error);
+	CHECK(!plain->left->headOffset.has_value());
+
+	CHECK(!Parse(R"({"hands":{"left":{"world":[0,0,0],"yaw":5,"yawIn":5}}})", error).has_value());
+	CHECK(error.find("yawIn") != std::string::npos);
+	CHECK(!Parse(R"({"hands":{"left":{"world":[0,0,0],"yawIn":181}}})", error).has_value());
+	CHECK(error.find("hands.left.yawIn") != std::string::npos);
+	CHECK(!Parse(R"({"hands":{"left":{"node":"Chest","headOffset":[0,0,0]}}})", error).has_value());
+	CHECK(error.find("hands.left.headOffset") != std::string::npos);
+	CHECK(!Parse(R"({"hands":{"left":{"world":[0,0,0],"headOffset":[0,0]}}})", error).has_value());
+	CHECK(!Parse(R"({"hands":{"left":{"world":[0,0,0],"headOffset":[0,0,5000]}}})", error).has_value());
+}
+
+TEST_CASE("HeadOffsetWorld mirrors the outward axis per hand and follows a pitched head")
+{
+	const Vec3 center{ 100.0, 200.0, 50.0 };
+	const Vec3 offset{ 3.0, 4.0, 5.0 };
+
+	// level, facing +y
+	const HeadAxes level{ Vec3{ 1, 0, 0 }, Vec3{ 0, 1, 0 }, Vec3{ 0, 0, 1 } };
+	CHECK(NearVec(HeadOffsetWorld(center, offset, level, true), Vec3{ 103.0, 204.0, 55.0 }));
+	CHECK(NearVec(HeadOffsetWorld(center, offset, level, false), Vec3{ 97.0, 204.0, 55.0 }));
+
+	// pitched 30 degrees down: forward dips, up leans forward
+	const double   p = 30.0 * kPi / 180.0;
+	const HeadAxes pitched{ Vec3{ 1, 0, 0 }, Vec3{ 0, std::cos(p), -std::sin(p) }, Vec3{ 0, std::sin(p), std::cos(p) } };
+	const Vec3     forwardOnly = HeadOffsetWorld(center, Vec3{ 0, 10, 0 }, pitched, true);
+	CHECK(NearVec(forwardOnly, Vec3{ 100.0, 200.0 + 10.0 * std::cos(p), 50.0 - 10.0 * std::sin(p) }));
+	const Vec3 left = HeadOffsetWorld(center, offset, pitched, false);
+	const Vec3 right = HeadOffsetWorld(center, offset, pitched, true);
+	// the two hands differ only along the head's right axis, mirrored around its center
+	CHECK(Near(left.y, right.y));
+	CHECK(Near(left.z, right.z));
+	CHECK(Near(left.x + right.x, 2.0 * center.x));
+}
+
 TEST_CASE("ParsePose refuses malformed requests")
 {
 	std::string error;

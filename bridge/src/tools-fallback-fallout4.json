@@ -363,7 +363,7 @@
             "type": "string"
           },
           "hands": {
-            "description": "pose: 'ready' for both hands, or {left?, right?} (or primary? / offhand?) each 'ready', {node, root?, front?, offset?:[x,y,z]} (that controller's wand at a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in) or {world:[x,y,z]}; a node or world hand takes pitch / yaw (degrees, -180..180) for how the controller points; an absent hand stays where it is held",
+            "description": "pose: 'ready' for both hands, or {left?, right?} (or primary? / offhand?) each 'ready', {node, root?, front?, offset?:[x,y,z]} (that controller's wand at a node of the player, front world units in front of it along the facing, plus a world offset; root 'player' (body) or 'firstPerson' picks the skeleton the node is searched in) or {world:[x,y,z], headOffset?:[outward,forward,up]} (headOffset: world units along the HMD's axes as posed, outward toward that hand's own side, so one offset mirrors around the head); a node or world hand takes pitch / yaw (degrees, -180..180) for how the controller points, or yawIn instead of yaw (degrees, positive turns the controller toward the body for either hand); an absent hand stays where it is held",
             "oneOf": [
               {
                 "enum": ["ready"],

@@ -114,6 +114,11 @@ namespace dvb::vrhost
 		throw ToolError(501, "pose is not available on Skyrim VR yet; use reach");
 	}
 
+	PoseLogic::HeadAxes HmdAxes()
+	{
+		throw ToolError(501, "pose is not available on Skyrim VR yet; use reach");
+	}
+
 	/**
 	 * Not reported on Skyrim VR yet: the handedness action and the primary / offhand hand
 	 * names answer 501 there.

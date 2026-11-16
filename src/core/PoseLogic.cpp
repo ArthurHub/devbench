@@ -68,7 +68,11 @@ namespace dvb::PoseLogic
 			return true;
 		}
 
-		bool ReadHand(const json& a_value, const std::string& a_path, HandPlacement& a_out, std::string& a_error)
+		/**
+		 * Reads one hand's placement. a_right picks the side yawIn turns toward the body from, so
+		 * the placement carries the tracking yaw.
+		 */
+		bool ReadHand(const json& a_value, const std::string& a_path, bool a_right, HandPlacement& a_out, std::string& a_error)
 		{
 			if (a_value.is_string()) {
 				if (a_value.get<std::string>() != "ready") {
@@ -88,17 +92,39 @@ namespace dvb::PoseLogic
 				a_error = std::format("'{}' needs exactly one of 'node' or 'world'", a_path);
 				return false;
 			}
-			if (a_value.contains("pitch") || a_value.contains("yaw")) {
+			if (a_value.contains("yaw") && a_value.contains("yawIn")) {
+				a_error = std::format("'{}' takes 'yaw' or 'yawIn', not both", a_path);
+				return false;
+			}
+			if (a_value.contains("pitch") || a_value.contains("yaw") || a_value.contains("yawIn")) {
 				HandAim aim = kReadyAim;
 				if (a_value.contains("pitch") && !ReadNumber(a_value["pitch"], a_path + ".pitch", -kHandAimLimitDeg, kHandAimLimitDeg, aim.pitchDeg, a_error))
 					return false;
 				if (a_value.contains("yaw") && !ReadNumber(a_value["yaw"], a_path + ".yaw", -kHandAimLimitDeg, kHandAimLimitDeg, aim.yawDeg, a_error))
 					return false;
+				if (a_value.contains("yawIn")) {
+					double yawIn = 0.0;
+					if (!ReadNumber(a_value["yawIn"], a_path + ".yawIn", -kHandAimLimitDeg, kHandAimLimitDeg, yawIn, a_error))
+						return false;
+					aim.yawDeg = YawInToTracking(yawIn, a_right);
+				}
 				a_out.aim = aim;
 			}
 			if (hasWorld) {
 				a_out.kind = HandPlacement::Kind::kWorld;
-				return ReadVec3(a_value["world"], a_path + ".world", kWorldLimit, a_out.world, a_error);
+				if (!ReadVec3(a_value["world"], a_path + ".world", kWorldLimit, a_out.world, a_error))
+					return false;
+				if (a_value.contains("headOffset")) {
+					Vec3 offset;
+					if (!ReadVec3(a_value["headOffset"], a_path + ".headOffset", ReachLogic::kOffsetLimit, offset, a_error))
+						return false;
+					a_out.headOffset = offset;
+				}
+				return true;
+			}
+			if (a_value.contains("headOffset")) {
+				a_error = std::format("'{}.headOffset' goes with a world target, not a node", a_path);
+				return false;
 			}
 			if (!a_value["node"].is_string() || a_value["node"].get<std::string>().empty() || a_value["node"].get<std::string>().size() > ReachLogic::kNodeMaxLen) {
 				a_error = std::format("'{}.node' must be a non-empty string of at most {} characters", a_path, ReachLogic::kNodeMaxLen);
@@ -258,7 +284,7 @@ namespace dvb::PoseLogic
 						return std::nullopt;
 					}
 					HandPlacement placement;
-					if (!ReadHand(value, "hands." + key, placement, a_error))
+					if (!ReadHand(value, "hands." + key, key == "right", placement, a_error))
 						return std::nullopt;
 					(key == "left" ? request.left : request.right) = placement;
 				}
@@ -279,6 +305,26 @@ namespace dvb::PoseLogic
 			request.corrections = static_cast<int>(corrections);
 		}
 		return request;
+	}
+
+	/**
+	 * A world target moved by a head offset (outward, forward, up) along the head's axes,
+	 * outward being -right for the left hand and +right for the right one.
+	 */
+	Vec3 HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, bool a_right)
+	{
+		const double outward = a_right ? a_headOffset.x : -a_headOffset.x;
+		return ReachLogic::Add(a_world, ReachLogic::Add(ReachLogic::Scale(a_axes.right, outward),
+											ReachLogic::Add(ReachLogic::Scale(a_axes.forward, a_headOffset.y), ReachLogic::Scale(a_axes.up, a_headOffset.z))));
+	}
+
+	/**
+	 * The tracking yaw that turns a controller a_yawInDeg toward the body: tracking yaw turns
+	 * left when positive, so the left hand takes it negated.
+	 */
+	double YawInToTracking(double a_yawInDeg, bool a_right)
+	{
+		return a_right ? a_yawInDeg : -a_yawInDeg;
 	}
 
 	Vec3 ReadyHand(bool a_right, double a_eyeHeight)
