@@ -1,8 +1,8 @@
 # One devbench, several games
 
-_Status: `main` of the `rollingrock/devbench` fork, merged with upstream through 1.32.0.
+_Status: `main` of the `rollingrock/devbench` fork, merged with upstream through 1.36.0.
 Both targets build — Fallout 4 (CMake) and Skyrim (xmake) — and the host-independent
-unit tests pass. Written 2026-08-15; status updated 2026-11-07._
+unit tests pass. Written 2026-08-15; status updated 2026-11-17._
 
 This is the working note behind the split, and the thing to read before reviewing the
 branch. It answers three questions in order: **why a fork and not a port**, **where the

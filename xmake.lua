@@ -15,7 +15,7 @@ includes("xmake/cpp-mcp.lua")
 set_project("devbench")
 set_license("GPL-3.0")
 
-local version = "1.32.0"
+local version = "1.36.0"
 local ver = version:split("%.")
 set_version(version)
 
@@ -211,6 +211,10 @@ add_files("src/core/InspectLogic.cpp") -- lights scope/budget/ordering and the h
 add_files("src/core/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic
 add_files("src/core/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
 add_files("src/core/DrawStatsLogic.cpp")
+add_files("src/core/Notices.cpp") -- notice board; pure logic
+add_files("src/core/GfxLogic.cpp") -- gfx path splitting and array index check; pure logic
+add_files("src/core/MapLogic.cpp") -- map tool argument validation; pure logic
+add_files("src/core/RunStatusLogic.cpp") -- run-status transcript compaction; pure logic
 add_headerfiles("tests/*.h")
 set_pcxxheader("tests/pch.h")
 add_defines("_WINSOCKAPI_")

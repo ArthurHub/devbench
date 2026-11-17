@@ -93,6 +93,10 @@ namespace
 		// accept the key and quietly do nothing with it.
 		if (cfg.alwaysActive)
 			logs::warn("devbench: alwaysActive is not implemented on Fallout 4 yet; ignored");
+		// Same for autoDismissMenus (Skyrim's modal watch). disableVanityCamera defaults to
+		// true, so it is not warned about: Fallout simply has no idle camera handling.
+		if (!cfg.autoDismissMenus.empty())
+			logs::warn("devbench: autoDismissMenus is not implemented on Fallout 4 yet; ignored");
 
 		g_server = new dvb::Server("127.0.0.1", cfg.port);
 		g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);

@@ -30,6 +30,8 @@ const FAMILIES = {
       "game",
       "actor",
       "forms",
+      "gfx",
+      "map",
       "camera",
       "papyrus",
       "capture",
@@ -41,6 +43,7 @@ const FAMILIES = {
       "ping",
       "files",
       "quit",
+      "notice",
     ]),
   },
   fallout4: {

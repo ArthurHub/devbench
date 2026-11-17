@@ -28,6 +28,9 @@ const FALLBACKS = {
   "bridge/src/tools-fallback.json": [
     "src/platform/skyrim/Tools.cpp",
     "src/platform/skyrim/Capture.cpp",
+    "src/platform/skyrim/Map.cpp",
+    "src/platform/skyrim/Gfx.cpp",
+    "src/platform/skyrim/ModalWatch.cpp",
     "src/platform/skyrim/KeyboardInput.cpp",
     ...SHARED_FILES,
   ],
@@ -47,6 +50,10 @@ const DESCRIPTOR_FILE = "src/core/ToolRegistry.h";
 const DESCRIPTOR_TOKENS =
   /\b(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)\b/;
 const STRING_LITERAL = /"(?:[^"\\]|\\.){3,}"/;
+// Runtime code, not tool text: an #include, a result field built from a call
+// (`{ "key", Fn(x) },`), or a result field assigned from a non-literal (`j["key"] = x;`).
+const RESULT_FIELD =
+  /^(?:#include\s|\{\s*"\w+",\s*[^"]*\([^"]*\},?$|\w+\["\w+"\]\s*=\s*[^"]*;$)/;
 
 // Structural validation, independent of whether a registration file changed --
 // the file-touched check below only proves the file moved, not that it's sane.
@@ -113,7 +120,9 @@ let failed = false;
 for (const [FALLBACK_FILE, sources] of Object.entries(FALLBACKS)) {
   const touched = [
     ...sources.filter((f) =>
-      changedCodeLines(f).some((l) => STRING_LITERAL.test(l)),
+      changedCodeLines(f).some(
+        (l) => STRING_LITERAL.test(l) && !RESULT_FIELD.test(l),
+      ),
     ),
     ...(descriptorChanged ? [DESCRIPTOR_FILE] : []),
   ];
