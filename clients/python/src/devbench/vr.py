@@ -10,9 +10,13 @@ from __future__ import annotations
 import http.client
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal, cast, get_args
 
 from devbench.client import Devbench, DevbenchError
+
+# the game's handedness: the physical controller that is the primary hand
+Handedness = Literal["left", "right"]
+HANDEDNESS: tuple[Handedness, ...] = get_args(Handedness)
 
 # F4VR-CommonFramework's gesture thresholds, not devbench's: a tap is released within 0.3 s, a long press held over
 # 0.6 s
@@ -30,21 +34,33 @@ def _check_hand(hand: str) -> None:
         raise ValueError(f"hand must be one of {', '.join(_HANDS)}, not {hand!r}")
 
 
-def left_handed(bench: Devbench) -> bool:
-    """Whether the game is left-handed: the left controller is the primary hand (bLeftHandedMode:VR on FO4VR)."""
-    return bool(bench.tool("input", action="handedness")["leftHanded"])
+def check_handedness(value: str) -> Handedness:
+    """Return value as a Handedness; raise ValueError for anything but "left" / "right"."""
+    if value not in HANDEDNESS:
+        raise ValueError(f"unknown handedness {value!r}: expected 'left' or 'right'")
+    return cast(Handedness, value)
 
 
-def set_left_handed(bench: Devbench, value: bool, *, owner: str | None = None) -> bool:
+def _from_wire(left_handed: object) -> Handedness:
+    """The handedness of the input tool's leftHanded bool."""
+    return "left" if left_handed else "right"
+
+
+def handedness(bench: Devbench) -> Handedness:
+    """The game's handedness: the controller that is the primary hand (bLeftHandedMode:VR on FO4VR)."""
+    return _from_wire(bench.tool("input", action="handedness")["leftHanded"])
+
+
+def set_handedness(bench: Devbench, value: Handedness, *, owner: str | None = None) -> Handedness:
     """
-    Set the game's handedness and return the value before. devbench answers once the game's wands have swapped
+    Set the game's handedness and return the one before. devbench answers once the game's wands have swapped
     controllers, under the pose hold of owner when it runs one, else a short hold of its own; it raises DevbenchError
     when another sequence holds the devices (409) or the game did not follow (504, the old value put back).
     """
-    args: dict[str, Any] = {"action": "handedness", "leftHanded": bool(value)}
+    args: dict[str, Any] = {"action": "handedness", "leftHanded": check_handedness(value) == "left"}
     if owner is not None:
         args["owner"] = owner
-    return bool(bench.tool("input", **args)["was"])
+    return _from_wire(bench.tool("input", **args)["was"])
 
 
 class Hands:

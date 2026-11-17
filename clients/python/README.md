@@ -159,14 +159,15 @@ the body's forward), so one recorded placement fits either hand and either hande
 A press without a hold of this owner (it never started, or the hold ran out) raises `DevbenchError` (409). `stop`
 ignores a refused stop, and on an exception inside the `with` it never hides that exception.
 
-Read and set the game's handedness (`bLeftHandedMode:VR` on Fallout 4 VR):
+Read and set the game's handedness, the controller that is the primary hand: `"left"` or `"right"` (the
+`vr.Handedness` type; `bLeftHandedMode:VR` on Fallout 4 VR):
 
 ```python
-from devbench.vr import left_handed, set_left_handed
+from devbench.vr import handedness, set_handedness
 
-was = set_left_handed(bench, True)  # the value before; answers once the game's wands have swapped
-assert left_handed(bench)
-set_left_handed(bench, was, owner="mymod-e2e")  # under that owner's pose hold, when it runs one
+was = set_handedness(bench, "left")  # the one before; answers once the game's wands have swapped
+assert handedness(bench) == "left"
+set_handedness(bench, was, owner="mymod-e2e")  # under that owner's pose hold, when it runs one
 ```
 
 devbench checks the swap under the pose hold of `owner` when it runs one, else under a short hold of its own. Another
@@ -270,15 +271,15 @@ DEVBENCH = devbench.testing.Config(
 
 Fixtures:
 
-| Fixture                 | Gives                                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `bench` (session)       | the `Devbench`, checked to be the configured game and VR; connects only when a test needs it                |
-| `game` (session)        | the `Devbench`, once the game is set up (below); the backup is put back at the end, also when the run fails |
-| `mod` (session)         | `ModTool` of `tool`                                                                                         |
-| `events`                | `Events` from the start of the test, with the mod's tool as prefix                                          |
-| `log_mark` (session)    | the `LogMark` in `log`, set just before the first test                                                      |
-| `left_handed` (session) | whether the run is left-handed: what `game` set, else the game's own                                        |
-| `report` (session)      | the run's record, which the HTML report renders (below)                                                     |
+| Fixture                | Gives                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `bench` (session)      | the `Devbench`, checked to be the configured game and VR; connects only when a test needs it                |
+| `game` (session)       | the `Devbench`, once the game is set up (below); the backup is put back at the end, also when the run fails |
+| `mod` (session)        | `ModTool` of `tool`                                                                                         |
+| `events`               | `Events` from the start of the test, with the mod's tool as prefix                                          |
+| `log_mark` (session)   | the `LogMark` in `log`, set just before the first test                                                      |
+| `handedness` (session) | the run's handedness (`"left"` / `"right"`): what `game` set, else the game's own                           |
+| `report` (session)     | the run's record, which the HTML report renders (below)                                                     |
 
 `game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
 `require_actions`, then `require_version`) and each of `requires` (`require_tools`, its `actions`, then
@@ -307,7 +308,7 @@ pytest tests/e2e --devbench-quit
 ```
 
 With `handedness` (or `--left-handed`, which overrides it) `game` writes the player's handedness to
-`.backup/handedness.json`, sets the run's with `set_left_handed` (devbench answers once the game's wands have swapped)
+`.backup/handedness.json`, sets the run's with `set_handedness` (devbench answers once the game's wands have swapped)
 and notes "Ran left-handed." / "Ran right-handed." in the report. At the end it puts the player's back, before the
 files, also when the run fails, and deletes the file. A file a crashed run left is put back at the next run's start or
 by `--e2e-restore`; one `--e2e-restore` cannot set (no loaded game) is kept, and it exits with code 2.
@@ -318,8 +319,8 @@ before the handedness and the backup are put back:
 
 ```python
 @pytest.fixture(scope="session")
-def game(game, left_handed, report):
-    wait_until(lambda: MyMod(game).left_handed() == left_handed, 5, what="the mod following the handedness")
+def game(game, handedness, report):
+    wait_until(lambda: MyMod(game).handedness() == handedness, 5, what="the mod following the handedness")
     yield game
     MyMod(game).clear()
 ```

@@ -230,16 +230,16 @@ def test_a_press_without_a_hold_raises_devbench_error(bench, tool, slept):
     assert slept == []
 
 
-def test_left_handed_reads_the_handedness(bench, tool):
+def test_handedness_reads_the_game(bench, tool):
     tool.left_handed = True
 
-    assert devbench.vr.left_handed(bench) is True
+    assert devbench.vr.handedness(bench) == "left"
     assert tool.calls == [{"action": "handedness"}]
 
 
-def test_set_left_handed_returns_the_value_before(bench, tool):
-    assert devbench.vr.set_left_handed(bench, True) is False
-    assert devbench.vr.set_left_handed(bench, False, owner="e2e") is True
+def test_set_handedness_returns_the_one_before(bench, tool):
+    assert devbench.vr.set_handedness(bench, "left") == "right"
+    assert devbench.vr.set_handedness(bench, "right", owner="e2e") == "left"
 
     assert tool.calls == [
         {"action": "handedness", "leftHanded": True},
@@ -251,6 +251,13 @@ def test_a_set_the_game_did_not_follow_raises_devbench_error(bench, tool):
     tool.refuse.add("handedness")
 
     with pytest.raises(DevbenchError, match="handedness refused") as raised:
-        devbench.vr.set_left_handed(bench, True)
+        devbench.vr.set_handedness(bench, "left")
 
     assert raised.value.status == 409
+
+
+def test_set_handedness_rejects_an_unknown_value(bench, tool):
+    with pytest.raises(ValueError, match="unknown handedness 'both'"):
+        devbench.vr.set_handedness(bench, "both")  # type: ignore[arg-type]
+
+    assert tool.calls == []

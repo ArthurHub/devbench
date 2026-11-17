@@ -8,12 +8,10 @@ from dataclasses import dataclass, field
 
 from devbench.checks import version_numbers
 from devbench.client import ModTool
+from devbench.vr import Handedness, check_handedness
 
 # the games devbench runs in, as find_port and require name them
 _GAMES = ("skyrim", "fallout4")
-
-# the handedness a run can set: the controller that is the primary hand
-_HANDEDNESS = ("left", "right")
 
 
 @dataclass(frozen=True)
@@ -73,7 +71,7 @@ class Config:
     cell: str = "QASmoke"
     picture: int | None = None
     report_dir: str | os.PathLike[str] | None = None
-    handedness: str | None = None
+    handedness: Handedness | None = None
     requires: Sequence[Dependency] = ()
     ready: Callable[[ModTool], object] | None = None
     ready_timeout: float = 30.0
@@ -83,10 +81,10 @@ class Config:
             raise ValueError("ready needs tool: it is a condition on the mod's tool")
         if self.game not in _GAMES:
             raise ValueError(f"unknown game {self.game!r}: expected 'skyrim' or 'fallout4'")
-        if self.handedness is not None and self.handedness not in _HANDEDNESS:
-            raise ValueError(f"unknown handedness {self.handedness!r}: expected 'left', 'right' or None")
-        if self.handedness is not None and not self.vr:
-            raise ValueError("handedness needs vr=True: only VR has one")
+        if self.handedness is not None:
+            check_handedness(self.handedness)
+            if not self.vr:
+                raise ValueError("handedness needs vr=True: only VR has one")
 
     def area_titles(self) -> dict[str, str]:
         """Each area's title by test-file name, in areas order: the plain title, or an Area's."""

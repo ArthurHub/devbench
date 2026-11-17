@@ -747,11 +747,11 @@ def test_config_rejects_an_unknown_handedness_and_one_without_vr():
 
 
 HANDED_TEST = """
-from devbench.vr import left_handed as game_left_handed
+from devbench.vr import handedness as game_handedness
 
-def test_runs_left_handed(game, left_handed):
-    assert left_handed is True
-    assert game_left_handed(game) is True
+def test_runs_left_handed(game, handedness):
+    assert handedness == "left"
+    assert game_handedness(game) == "left"
 """
 
 
@@ -794,7 +794,7 @@ def test_a_failed_session_still_puts_the_handedness_back(pytester, fake, game):
 def test_without_a_handedness_the_run_leaves_it_and_the_fixture_reads_the_game(pytester, fake, game):
     game.left_handed = True
     _conftest(pytester)
-    pytester.makepyfile(test_light="def test_reads(left_handed): assert left_handed is True")
+    pytester.makepyfile(test_light="def test_reads(handedness): assert handedness == 'left'")
 
     reprec = pytester.inline_run("--devbench-port", str(fake.port))
 
@@ -817,18 +817,18 @@ def test_a_set_the_game_did_not_follow_exits_and_leaves_the_players(pytester, fa
     assert game.files.files == {MOD_FILE: b"original"}
 
 
-def _leave_handedness(pytester, left_handed):
+def _leave_handedness(pytester, handedness):
     """The handedness.json a crashed run leaves: the player's value, kept while the run had changed it."""
     folder = pytester.path / ".backup"
     folder.mkdir(exist_ok=True)
-    (folder / "handedness.json").write_text(json.dumps({"leftHanded": left_handed}), encoding="utf-8")
+    (folder / "handedness.json").write_text(json.dumps({"handedness": handedness}), encoding="utf-8")
 
 
 def test_a_leftover_handedness_is_put_back_before_the_run(pytester, fake, game):
     game.left_handed = True
-    _leave_handedness(pytester, False)
+    _leave_handedness(pytester, "right")
     _conftest(pytester)
-    pytester.makepyfile(test_light="def test_reads(left_handed): assert left_handed is False")
+    pytester.makepyfile(test_light="def test_reads(handedness): assert handedness == 'right'")
 
     reprec = pytester.inline_run("--devbench-port", str(fake.port))
 
@@ -840,7 +840,7 @@ def test_a_leftover_handedness_is_put_back_before_the_run(pytester, fake, game):
 
 def test_e2e_restore_puts_the_handedness_back(pytester, fake, game):
     game.left_handed = True
-    _leave_handedness(pytester, False)
+    _leave_handedness(pytester, "right")
     _conftest(pytester)
 
     result = pytester.runpytest("--devbench-port", str(fake.port), "--e2e-restore")
@@ -856,7 +856,7 @@ def test_e2e_restore_keeps_a_handedness_it_cannot_set_and_still_puts_the_files_b
     game.files.files[MOD_FILE] = b"left by a crashed run"
     game.left_handed = True
     game.refuse_handedness = False
-    _leave_handedness(pytester, False)
+    _leave_handedness(pytester, "right")
     _conftest(pytester)
 
     result = pytester.runpytest("--devbench-port", str(fake.port), "--e2e-restore")

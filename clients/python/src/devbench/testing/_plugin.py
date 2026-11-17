@@ -81,8 +81,8 @@ class _Run:
     # the crashes of the setup failures captured so far: a session fixture's error fails every later test's setup
     # again, and only its first test takes the picture and log tail
     setup_crashes: set[tuple[str, int, str]] = field(default_factory=set)
-    # the handedness the game fixture set for the run (True: left-handed); None while it set none
-    left_handed: bool | None = None
+    # the handedness the game fixture set for the run; None while it set none
+    handedness: vr.Handedness | None = None
 
     def backup(self, bench: Devbench) -> Backup | None:
         """The backup of Config.backup in <home>/.backup, or None when the config backs nothing up."""
@@ -104,30 +104,28 @@ class _Run:
         """Whether a player's handedness waits to be put back, checked without a connection to the game."""
         return self.handedness_file.is_file()
 
-    def keep_handedness(self, bench: Devbench) -> bool:
+    def keep_handedness(self, bench: Devbench) -> vr.Handedness:
         """
         Read the player's handedness and write it to handedness_file before the run changes it; returns it. The file
         goes to a .partial first and replaces handedness_file only once whole.
         """
-        was = vr.left_handed(bench)
+        was = vr.handedness(bench)
         self.handedness_file.parent.mkdir(parents=True, exist_ok=True)
         partial = self.handedness_file.with_suffix(".partial")
-        partial.write_text(json.dumps({"leftHanded": was}), encoding="utf-8")
+        partial.write_text(json.dumps({"handedness": was}), encoding="utf-8")
         os.replace(partial, self.handedness_file)
         return was
 
-    def restore_handedness(self, bench: Devbench) -> bool:
+    def restore_handedness(self, bench: Devbench) -> vr.Handedness:
         """Set the handedness handedness_file holds and delete the file; returns it. A set that fails keeps the file."""
-        value = bool(json.loads(self.handedness_file.read_text(encoding="utf-8"))["leftHanded"])
-        vr.set_left_handed(bench, value)
+        value = vr.check_handedness(json.loads(self.handedness_file.read_text(encoding="utf-8"))["handedness"])
+        vr.set_handedness(bench, value)
         self.handedness_file.unlink()
         return value
 
-    def wanted_left_handed(self, config: pytest.Config) -> bool | None:
-        """The handedness the run asks for: True with --left-handed, else Config.handedness; None leaves it alone."""
-        if config.getoption("--left-handed"):
-            return True
-        return None if self.config.handedness is None else self.config.handedness == "left"
+    def wanted_handedness(self, config: pytest.Config) -> vr.Handedness | None:
+        """The handedness the run asks for: "left" with --left-handed, else Config.handedness; None leaves it alone."""
+        return "left" if config.getoption("--left-handed") else self.config.handedness
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         self.record.add(report)
@@ -277,8 +275,8 @@ def _find_config(config: pytest.Config) -> tuple[Config, Path]:
     return devbench, Path(module.__file__).resolve().parent
 
 
-def _handed(left_handed: bool) -> str:
-    return "left-handed" if left_handed else "right-handed"
+def _handed(handedness: vr.Handedness) -> str:
+    return f"{handedness}-handed"
 
 
 def _run(config: pytest.Config) -> _Run:
@@ -536,11 +534,11 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
 
     files = _setup_step("taking the backup", backup.take) if backup is not None else 0
     try:
-        wanted = run.wanted_left_handed(pytestconfig)
+        wanted = run.wanted_handedness(pytestconfig)
         if wanted is not None:
             _setup_step("reading the player's handedness", lambda: run.keep_handedness(bench))
-            _setup_step(f"setting the game {_handed(wanted)}", lambda: vr.set_left_handed(bench, wanted))
-            run.left_handed = wanted
+            _setup_step(f"setting the game {_handed(wanted)}", lambda: vr.set_handedness(bench, wanted))
+            run.handedness = wanted
             record.note(f"Ran {_handed(wanted)}.")
         if devbench.log is not None:
             log = devbench.log
@@ -614,11 +612,11 @@ def devbench_test_mark(request: pytest.FixtureRequest) -> None:
         pass
 
 
-@pytest.fixture(scope="session", name="left_handed")
-def left_handed_fixture(game: Devbench, pytestconfig: pytest.Config) -> bool:
-    """Whether the run is left-handed: what the game fixture set (--left-handed, Config.handedness), else the game's."""
+@pytest.fixture(scope="session", name="handedness")
+def handedness_fixture(game: Devbench, pytestconfig: pytest.Config) -> vr.Handedness:
+    """The run's handedness: what the game fixture set (--left-handed, Config.handedness), else the game's."""
     run = _run(pytestconfig)
-    return run.left_handed if run.left_handed is not None else vr.left_handed(game)
+    return run.handedness if run.handedness is not None else vr.handedness(game)
 
 
 # named so the package's report attribute stays the devbench.testing.report module
