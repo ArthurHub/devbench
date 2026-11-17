@@ -299,7 +299,8 @@ When no game answers and a launch command is set, `bench` launches the game (`la
 is your setup (MO2 instance, profile, paths), not the mod's, so it never goes in the conftest: pass
 `--devbench-launch "<command>"` or set `DEVBENCH_LAUNCH` (the option wins). The report notes how long the game took
 to come up. `--devbench-quit` quits the game when the session ends (after the files and the handedness are put back,
-also after a setup failure), with a 60 s watchdog for a hung shutdown, and notes it. Together they make an unattended
+also after a setup failure), with a 60 s watchdog for a hung shutdown, and notes it. An `--e2e-restore` run quits it
+too, once the files and the handedness are put back. Together they make an unattended
 run from a closed game to a report:
 
 ```powershell

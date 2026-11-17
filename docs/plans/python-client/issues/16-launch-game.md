@@ -42,7 +42,8 @@ The client does not know about MO2, Steam or SteamVR; it runs a command the user
     with how long the game took to be up; the report notes that time, not the command.
   - `--devbench-quit` quits the game in the `bench` fixture's teardown (after the `game` fixture put the backup and
     handedness back, also after a setup failure exited the run), whether or not the run launched it, with
-    `kill_after=60`; the report notes it.
+    `kill_after=60`; the report notes it. An `--e2e-restore` run, which has no `bench` fixture, quits it the same
+    way after putting things back (also when that failed) and says so in its exit line.
 
 ## Acceptance
 

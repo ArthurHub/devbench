@@ -375,7 +375,8 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_sessionstart(session: pytest.Session) -> None:
     """
     With --e2e-restore: put back the files and the handedness a run left and exit, before any test is collected. A
-    handedness that cannot be set (no loaded game) is kept for the next try, and the exit code says so.
+    handedness that cannot be set (no loaded game) is kept for the next try, and the exit code says so. With
+    --devbench-quit the game is quit after, also when putting things back failed.
     """
     config = session.config
     if not config.getoption("--e2e-restore"):

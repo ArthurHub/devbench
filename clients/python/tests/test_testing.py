@@ -255,6 +255,20 @@ def test_e2e_restore_puts_the_backup_back_and_runs_no_test(pytester, fake, game,
     assert not (pytester.path / ".backup" / "manifest.json").exists()
 
 
+def test_e2e_restore_with_devbench_quit_quits_the_game_after_the_restore(pytester, fake, game, bench):
+    Backup(bench, [("mygames", "Mods_Config/MyMod/*")], pytester.path / ".backup").take()
+    game.files.files[MOD_FILE] = b"left by a crashed run"
+    fake.tools["quit"] = lambda args: (fake.stop(), {"ok": True, "quitting": True})[1]
+    _conftest(pytester)
+
+    result = pytester.runpytest("--devbench-port", str(fake.port), "--e2e-restore", "--devbench-quit")
+
+    assert result.ret == 0
+    result.stdout.fnmatch_lines(["*put back the backup: 1 files written, 0 deleted; quit the game*"])
+    assert game.files.files == {MOD_FILE: b"original"}
+    assert fake.calls[-1] == ("POST", "/api/tool/quit", {"killAfterMs": 60000})
+
+
 def test_e2e_restore_without_a_backup_says_so(pytester, fake):
     _conftest(pytester)
 
