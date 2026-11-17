@@ -17,7 +17,7 @@ from devbench.client import HOST, Devbench, DevbenchError, find_port
 from devbench.console import console
 from devbench.games import fallout4
 from devbench.menus import open_menus
-from devbench.waits import wait_until
+from devbench.waits import poll_until, wait_until
 
 # connecting to a port: a listener on the loopback accepts at once, while Windows retries a refused connect for
 # about 2 s before failing it, so a connect that has not succeeded by then means nothing listens
@@ -304,19 +304,20 @@ def launch(
     _LAUNCHERS.append(launcher)
     waiting = _LaunchWait(game, vr, port)
     deadline = time.monotonic() + timeout
+
+    def timed_out(_: object) -> DevbenchError:
+        code = launcher.poll()
+        fate = "the launcher still runs" if code is None else f"the launcher exited with code {code}"
+        return DevbenchError(f"the game was not up within {timeout} s: {waiting.seen}; {fate}")
+
     try:
-        while True:
-            bench = waiting.poll(deadline)
-            if bench is not None:
-                return bench
-            if time.monotonic() > deadline:
-                break
-            time.sleep(_LAUNCH_INTERVAL)
+        bench = poll_until(
+            lambda: waiting.poll(deadline), lambda bench: bench is not None, deadline, _LAUNCH_INTERVAL, timed_out
+        )
     finally:
         waiting.close()
-    code = launcher.poll()
-    fate = "the launcher still runs" if code is None else f"the launcher exited with code {code}"
-    raise DevbenchError(f"the game was not up within {timeout} s: {waiting.seen}; {fate}")
+    assert bench is not None
+    return bench
 
 
 def restart(

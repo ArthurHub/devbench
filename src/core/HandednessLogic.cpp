@@ -12,22 +12,34 @@ namespace dvb::HandednessLogic
 		}
 
 		/**
-		 * Whether a_value is a string naming a logical hand.
+		 * A copy of VR input arguments with each hand name passed through a_map, at every place a
+		 * hand is named: press's 'hand', the keys of pose's 'hands' object, and head.lookAt (string
+		 * values only). The one walk over those places; fails (nullopt, a_duplicate set to the
+		 * name) when the mapped 'hands' keys name one controller twice.
 		 */
-		bool IsLogicalValue(const json& a_value)
+		template <class Map>
+		std::optional<json> MapHandNames(const json& a_args, Map&& a_map, std::string& a_duplicate)
 		{
-			return a_value.is_string() && IsLogical(a_value.get<std::string>());
-		}
-
-		/**
-		 * The head.lookAt value of the arguments, or null when there is none.
-		 */
-		const json& LookAt(const json& a_args)
-		{
-			static const json none;
-			if (!a_args.contains("head") || !a_args["head"].is_object() || !a_args["head"].contains("lookAt"))
-				return none;
-			return a_args["head"]["lookAt"];
+			json out = a_args;
+			if (!out.is_object())
+				return out;
+			if (out.contains("hand") && out["hand"].is_string())
+				out["hand"] = a_map(out["hand"].get<std::string>());
+			if (out.contains("hands") && out["hands"].is_object()) {
+				json hands = json::object();
+				for (const auto& [key, value] : out["hands"].items()) {
+					const std::string mapped = a_map(key);
+					if (hands.contains(mapped)) {
+						a_duplicate = mapped;
+						return std::nullopt;
+					}
+					hands[mapped] = value;
+				}
+				out["hands"] = std::move(hands);
+			}
+			if (out.contains("head") && out["head"].is_object() && out["head"].contains("lookAt") && out["head"]["lookAt"].is_string())
+				out["head"]["lookAt"] = a_map(out["head"]["lookAt"].get<std::string>());
+			return out;
 		}
 	}
 
@@ -53,15 +65,15 @@ namespace dvb::HandednessLogic
 	 */
 	bool UsesLogicalHands(const json& a_args)
 	{
-		if (!a_args.is_object())
-			return false;
-		if (a_args.contains("hand") && IsLogicalValue(a_args["hand"]))
-			return true;
-		if (a_args.contains("hands") && a_args["hands"].is_object())
-			for (const auto& [key, value] : a_args["hands"].items())
-				if (IsLogical(key))
-					return true;
-		return IsLogicalValue(LookAt(a_args));
+		bool        found = false;
+		std::string duplicate;
+		MapHandNames(
+			a_args, [&](const std::string& a_name) {
+				found = found || IsLogical(a_name);
+				return a_name;
+			},
+			duplicate);
+		return found;
 	}
 
 	/**
@@ -72,25 +84,14 @@ namespace dvb::HandednessLogic
 	 */
 	std::optional<json> ResolveHands(const json& a_args, bool a_leftHanded, std::string& a_error)
 	{
-		json out = a_args;
-		if (!out.is_object())
-			return out;
-		if (out.contains("hand") && IsLogicalValue(out["hand"]))
-			out["hand"] = *PhysicalHand(out["hand"].get<std::string>(), a_leftHanded);
-		if (out.contains("hands") && out["hands"].is_object()) {
-			json hands = json::object();
-			for (const auto& [key, value] : out["hands"].items()) {
-				const std::string physical = IsLogical(key) ? *PhysicalHand(key, a_leftHanded) : key;
-				if (hands.contains(physical)) {
-					a_error = std::format("'hands' names the {} controller twice ({}handed)", physical, a_leftHanded ? "left-" : "right-");
-					return std::nullopt;
-				}
-				hands[physical] = value;
-			}
-			out["hands"] = std::move(hands);
-		}
-		if (IsLogicalValue(LookAt(out)))
-			out["head"]["lookAt"] = *PhysicalHand(out["head"]["lookAt"].get<std::string>(), a_leftHanded);
+		std::string duplicate;
+		auto        out = MapHandNames(
+			a_args, [&](const std::string& a_name) {
+				return IsLogical(a_name) ? *PhysicalHand(a_name, a_leftHanded) : a_name;
+			},
+			duplicate);
+		if (!out)
+			a_error = std::format("'hands' names the {} controller twice ({}handed)", duplicate, a_leftHanded ? "left-" : "right-");
 		return out;
 	}
 

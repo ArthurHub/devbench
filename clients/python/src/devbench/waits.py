@@ -17,14 +17,13 @@ def wait_until(check: Callable[[], T], timeout: float, interval: float = 0.1, wh
     Call check until it returns a true value, and return that value; raise TimeoutError after timeout seconds.
     check runs at least once, also with a timeout of 0; what names the condition in the error.
     """
-    deadline = time.monotonic() + timeout
-    while True:
-        value = check()
-        if value:
-            return value
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"{what} did not hold within {timeout} s")
-        time.sleep(interval)
+    return poll_until(
+        check,
+        bool,
+        time.monotonic() + timeout,
+        interval,
+        lambda _: TimeoutError(f"{what} did not hold within {timeout} s"),
+    )
 
 
 def wait_for(
@@ -40,13 +39,32 @@ def wait_for(
     TimeoutError with the last value read, through describe when given, else its repr cut to 500 characters. read runs
     at least once; an exception from read or condition propagates, one from describe falls back to the repr.
     """
-    deadline = time.monotonic() + timeout
+    return poll_until(
+        read,
+        condition,
+        time.monotonic() + timeout,
+        interval,
+        lambda value: TimeoutError(f"{what} did not hold within {timeout} s: {_describe(value, describe)}"),
+    )
+
+
+def poll_until(
+    read: Callable[[], T],
+    condition: Callable[[T], object],
+    deadline: float,
+    interval: float,
+    timed_out: Callable[[T], BaseException],
+) -> T:
+    """
+    The polling loop under every wait: call read until condition accepts its value and return it; once
+    time.monotonic() passes deadline, raise timed_out(last value). read runs at least once, also past the deadline.
+    """
     while True:
         value = read()
         if condition(value):
             return value
         if time.monotonic() > deadline:
-            raise TimeoutError(f"{what} did not hold within {timeout} s: {_describe(value, describe)}")
+            raise timed_out(value)
         time.sleep(interval)
 
 
