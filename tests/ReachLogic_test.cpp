@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+using dvb::Hand;
 using dvb::json;
 using namespace dvb::ReachLogic;
 
@@ -506,7 +507,7 @@ TEST_CASE("CalibrationFrames produces four legs of four frames")
 	Pose hmd = Upright(Vec3{ 0.0, 0.0, 0.0 });
 	Vec3 rest{ 0.0, 0.0, 0.0 };
 	Vec3 other{ 5.0, 0.0, 0.0 };
-	json frames = CalibrationFrames(true, hmd, rest, other, 0.2);
+	json frames = CalibrationFrames(Hand::Right, hmd, rest, other, 0.2);
 	CHECK(frames.size() == 16);
 	CHECK(frames[0]["tMs"] == 0);
 	CHECK(frames[0]["seq"] == 1);
@@ -536,7 +537,7 @@ TEST_CASE("CalibrationFrames moves the left hand when requested")
 	Pose hmd = Upright(Vec3{ 0.0, 0.0, 0.0 });
 	Vec3 rest{ 0.0, 0.0, 0.0 };
 	Vec3 other{ 5.0, 0.0, 0.0 };
-	json frames = CalibrationFrames(false, hmd, rest, other, 0.2);
+	json frames = CalibrationFrames(Hand::Left, hmd, rest, other, 0.2);
 	CHECK(frames.size() == 16);
 	Vec3 leg1Left = PoseTranslation(frames[4], "left");
 	CHECK(NearXYZ(leg1Left, 0.2, 0.0, 0.0));

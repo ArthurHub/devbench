@@ -19,6 +19,17 @@ TEST_CASE("PhysicalHand maps logical hands through the handedness")
 	CHECK(!PhysicalHand("", true));
 }
 
+TEST_CASE("RoleOf inverts HandFor under either handedness")
+{
+	using dvb::Hand;
+	using dvb::Role;
+	for (const bool leftHanded : { false, true })
+		for (const Role role : { Role::Primary, Role::Offhand })
+			CHECK(dvb::RoleOf(dvb::HandFor(role, leftHanded), leftHanded) == role);
+	CHECK(dvb::RoleOf(Hand::Left, true) == Role::Primary);
+	CHECK(dvb::RoleOf(Hand::Left, false) == Role::Offhand);
+}
+
 TEST_CASE("UsesLogicalHands finds press hand, pose hands keys and head.lookAt")
 {
 	CHECK(!UsesLogicalHands(json::parse(R"({"action":"press","hand":"left"})")));

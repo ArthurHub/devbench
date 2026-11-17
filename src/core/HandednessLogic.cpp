@@ -53,9 +53,9 @@ namespace dvb::HandednessLogic
 		if (a_name == "left" || a_name == "right")
 			return std::string(a_name);
 		if (a_name == "primary")
-			return a_leftHanded ? "left" : "right";
+			return std::string(HandName(HandFor(Role::Primary, a_leftHanded)));
 		if (a_name == "offhand")
-			return a_leftHanded ? "right" : "left";
+			return std::string(HandName(HandFor(Role::Offhand, a_leftHanded)));
 		return std::nullopt;
 	}
 

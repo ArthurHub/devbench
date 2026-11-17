@@ -490,9 +490,9 @@ namespace dvb
 			/**
 			 * Holds the A/X button of one physical controller for a_ms, over the held pose.
 			 */
-			void PressA(bool a_right, std::int64_t a_ms)
+			void PressA(Hand a_hand, std::int64_t a_ms)
 			{
-				HandleVRInput(json{ { "action", "press" }, { "device", "vrTrackedSet" }, { "owner", kInputOwner }, { "hand", a_right ? "right" : "left" },
+				HandleVRInput(json{ { "action", "press" }, { "device", "vrTrackedSet" }, { "owner", kInputOwner }, { "hand", HandName(a_hand) },
 								  { "buttons", json::array({ "a" }) }, { "durationMs", a_ms } },
 					_ctx);
 			}
@@ -525,10 +525,10 @@ namespace dvb
 			std::uint32_t pick;
 		};
 
-		AimRead ReadAim(bool a_primaryRight)
+		AimRead ReadAim(Hand a_primary)
 		{
-			const json r = MainThread::RunAndWait([a_primaryRight]() -> json {
-				auto* wand = WandNode(a_primaryRight);
+			const json r = MainThread::RunAndWait([a_primary]() -> json {
+				auto* wand = WandNode(a_primary);
 				// The activation ray runs along the wand's local +Y, which in the world is the
 				// rotation's second ROW (entry[1][0], entry[1][1]). The second column is the same
 				// direction mirrored across world Y: it agreed only for frames lying along +Y and
@@ -545,13 +545,13 @@ namespace dvb
 		 * injection after a load takes longer than kSettle to reach the wand (measured live: one
 		 * read after it came back 38 degrees short of the turn).
 		 */
-		AimRead ReadSettledAim(bool a_primaryRight)
+		AimRead ReadSettledAim(Hand a_primary)
 		{
-			AimRead    last = ReadAim(a_primaryRight);
+			AimRead    last = ReadAim(a_primary);
 			const auto until = std::chrono::steady_clock::now() + kSettleLimit;
 			while (std::chrono::steady_clock::now() < until) {
 				std::this_thread::sleep_for(kSettlePoll);
-				const AimRead next = ReadAim(a_primaryRight);
+				const AimRead next = ReadAim(a_primary);
 				const bool    still = std::abs(WrapAngle(next.wandYaw - last.wandYaw)) < 0.01 &&
 				                      std::abs(next.wandX - last.wandX) < 0.5 && std::abs(next.wandY - last.wandY) < 0.5;
 				last = next;
@@ -567,7 +567,7 @@ namespace dvb
 		 * the wand at the frame for up to three passes, then sweeps up to 30 degrees either side.
 		 * Returns { matched, yawDeg, passes:[{ yawDeg, wandYawDeg, wandErrorDeg, pick }] }.
 		 */
-		json AimAtFrame(ControllerRig& a_rig, bool a_primaryRight, std::uint32_t a_frameHandle, double a_frameX, double a_frameY)
+		json AimAtFrame(ControllerRig& a_rig, Hand a_primary, std::uint32_t a_frameHandle, double a_frameX, double a_frameY)
 		{
 			json passes = json::array();
 			auto record = [&](double a_yaw, const AimRead& a_read) {
@@ -578,12 +578,12 @@ namespace dvb
 			};
 
 			a_rig.Turn(0.0);
-			const AimRead start = ReadSettledAim(a_primaryRight);
+			const AimRead start = ReadSettledAim(a_primary);
 			record(0.0, start);
 			if (start.pick == a_frameHandle)
 				return json{ { "matched", true }, { "yawDeg", 0.0 }, { "passes", std::move(passes) } };
 			a_rig.Turn(kPi / 2.0);
-			AimRead      read = ReadSettledAim(a_primaryRight);
+			AimRead      read = ReadSettledAim(a_primary);
 			const double turned = WrapAngle(read.wandYaw - start.wandYaw);
 			if (std::abs(std::abs(turned) - kPi / 2.0) > 0.5)
 				throw ToolError(500, std::format("player stepIn: a 90-degree turn of the injected controllers turned the wand {} degrees; the wand "
@@ -597,7 +597,7 @@ namespace dvb
 			for (int pass = 0; pass < 3 && read.pick != a_frameHandle; ++pass) {
 				yaw = WrapAngle(yaw + sign * error);
 				a_rig.Turn(yaw);
-				read = ReadSettledAim(a_primaryRight);
+				read = ReadSettledAim(a_primary);
 				error = record(yaw, read);
 			}
 			const double aimed = yaw;
@@ -606,7 +606,7 @@ namespace dvb
 					break;
 				yaw = WrapAngle(aimed + offsetDeg * kPi / 180.0);
 				a_rig.Turn(yaw);
-				read = ReadSettledAim(a_primaryRight);
+				read = ReadSettledAim(a_primary);
 				record(yaw, read);
 			}
 			return json{ { "matched", read.pick == a_frameHandle }, { "yawDeg", Degrees(yaw) }, { "passes", std::move(passes) } };
@@ -648,7 +648,7 @@ namespace dvb
 					{ "frameHandle", frame.ref->GetHandle().native_handle() },
 					{ "frameX", pos.x },
 					{ "frameY", pos.y },
-					{ "primaryRight", !LeftHandedMode() },
+					{ "leftHanded", LeftHandedMode() },
 				};
 			});
 			json out{ { "action", "stepIn" } };
@@ -658,8 +658,8 @@ namespace dvb
 			}
 			out["frame"] = placed["frame"];
 
-			const bool primaryRight = placed["primaryRight"].get<bool>();
-			json       aim = AimAtFrame(rig, primaryRight, placed["frameHandle"].get<std::uint32_t>(), placed["frameX"].get<double>(), placed["frameY"].get<double>());
+			const Hand primary = HandFor(Role::Primary, placed["leftHanded"].get<bool>());
+			json       aim = AimAtFrame(rig, primary, placed["frameHandle"].get<std::uint32_t>(), placed["frameX"].get<double>(), placed["frameY"].get<double>());
 			const bool aimed = aim["matched"].get<bool>();
 			out["aim"] = std::move(aim);
 			if (!aimed) {
@@ -680,7 +680,7 @@ namespace dvb
 			int        stalls = 0;
 			bool       in = false;
 			for (;;) {
-				rig.PressA(primaryRight, kActivateTapMs);
+				rig.PressA(primary, kActivateTapMs);
 				++taps;
 				const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
 				const json waited = WaitForPowerArmor(true, std::clamp(remaining, std::chrono::milliseconds(0), kTapRetry));
@@ -688,7 +688,7 @@ namespace dvb
 				stalls += waited.value("mainThreadStalls", 0);
 				if (in || std::chrono::steady_clock::now() >= deadline)
 					break;
-				if (ReadAim(primaryRight).pick != frameHandle) {
+				if (ReadAim(primary).pick != frameHandle) {
 					out["note"] = "the wand left the frame between taps (the player moved?), so it was not tapped again";
 					break;
 				}
@@ -714,7 +714,7 @@ namespace dvb
 			const auto timeout = TimeoutArg(a_args);
 			const json state = MainThread::RunAndWait([]() -> json {
 				auto& player = RequirePlayer("stepOut");
-				return json{ { "inPowerArmor", InPowerArmor(player) }, { "primaryRight", !LeftHandedMode() } };
+				return json{ { "inPowerArmor", InPowerArmor(player) }, { "leftHanded", LeftHandedMode() } };
 			});
 			json       out{ { "action", "stepOut" } };
 			if (!state["inPowerArmor"].get<bool>()) {
@@ -724,7 +724,7 @@ namespace dvb
 			}
 			ControllerRig rig(a_ctx);
 			rig.Turn(0.0);
-			rig.PressA(!state["primaryRight"].get<bool>(), kExitHoldMs);
+			rig.PressA(HandFor(Role::Offhand, state["leftHanded"].get<bool>()), kExitHoldMs);
 			out.update(WaitForPowerArmor(false, std::chrono::milliseconds(kExitHoldMs) + timeout));
 			const bool in = out["inPowerArmor"].get<bool>();
 			out["outcome"] = in ? "refused" : "switched";

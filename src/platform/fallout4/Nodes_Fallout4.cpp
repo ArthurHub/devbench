@@ -771,14 +771,16 @@ namespace dvb
 	}
 
 	/**
-	 * The primary or secondary Wand slot's node, whichever controller drives it.
+	 * The primary or secondary Wand slot's node, whichever controller drives it; the offhand's
+	 * slot is the game's secondary one.
 	 */
-	RE::NiAVObject* WandSlotNode(bool a_primary)
+	RE::NiAVObject* WandSlotNode(Role a_role)
 	{
-		const Slot* slot = FindVRSlot(a_primary ? "primaryWandNode" : "secondaryWandNode");
+		const bool  primary = a_role == Role::Primary;
+		const Slot* slot = FindVRSlot(primary ? "primaryWandNode" : "secondaryWandNode");
 		auto*       node = slot ? VRSlotRoot(*slot).node : nullptr;
 		if (!node)
-			throw ToolError(503, std::format("the {} wand node is not available", a_primary ? "primary" : "secondary"));
+			throw ToolError(503, std::format("the {} wand node is not available", primary ? "primary" : "secondary"));
 		return node;
 	}
 
@@ -786,8 +788,8 @@ namespace dvb
 	 * The Wand node for one physical controller. The game's primary wand follows the right
 	 * controller unless left-handed mode (bLeftHandedMode:VR) swaps them.
 	 */
-	RE::NiAVObject* WandNode(bool a_right)
+	RE::NiAVObject* WandNode(Hand a_hand)
 	{
-		return WandSlotNode(a_right != LeftHandedMode());
+		return WandSlotNode(RoleOf(a_hand, LeftHandedMode()));
 	}
 }

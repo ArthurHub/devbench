@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Hand.h"
 #include "core/Json.h"
 
 #include <cstddef>
@@ -37,9 +38,9 @@ namespace dvb
 	/// Main thread. A player node by name for Reach (Nodes_Fallout4.cpp).
 	RE::NiAVObject* FindPlayerNode(std::string_view a_name, std::string_view a_root = {});
 	/// Main thread. The Wand node that follows one physical controller (Nodes_Fallout4.cpp).
-	RE::NiAVObject* WandNode(bool a_right);
+	RE::NiAVObject* WandNode(Hand a_hand);
 	/// Main thread. The primary or secondary Wand slot's node, whichever controller drives it (Nodes_Fallout4.cpp).
-	RE::NiAVObject* WandSlotNode(bool a_primary);
+	RE::NiAVObject* WandSlotNode(Role a_role);
 	/// Main thread. True when bLeftHandedMode:VR makes the left controller the primary hand.
 	bool LeftHandedMode();
 	/// Any thread. The bLeftHandedMode:VR setting, or null on a runtime without it.

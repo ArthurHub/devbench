@@ -104,8 +104,8 @@ namespace dvb::vrhost
 
 	HandednessLogic::WandSlots WandSlotsWorld()
 	{
-		const auto& primary = WandSlotNode(true)->world.translate;
-		const auto& secondary = WandSlotNode(false)->world.translate;
+		const auto& primary = WandSlotNode(Role::Primary)->world.translate;
+		const auto& secondary = WandSlotNode(Role::Offhand)->world.translate;
 		return HandednessLogic::WandSlots{ { primary.x, primary.y, primary.z }, { secondary.x, secondary.y, secondary.z } };
 	}
 
@@ -113,9 +113,9 @@ namespace dvb::vrhost
 	 * Pose measures the Wand, which the game places straight from the controller pose with
 	 * no body IK, so it exists with or without FRIK.
 	 */
-	ReachLogic::Vec3 ReachHandWorld(bool a_right)
+	ReachLogic::Vec3 ReachHandWorld(Hand a_hand)
 	{
-		const auto& t = WandNode(a_right)->world.translate;
+		const auto& t = WandNode(a_hand)->world.translate;
 		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
 

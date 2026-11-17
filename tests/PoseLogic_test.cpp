@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+using dvb::Hand;
 using dvb::json;
 using namespace dvb::PoseLogic;
 
@@ -116,16 +117,16 @@ TEST_CASE("HeadOffsetWorld mirrors the outward axis per hand and follows a pitch
 
 	// level, facing +y
 	const HeadAxes level{ Vec3{ 1, 0, 0 }, Vec3{ 0, 1, 0 }, Vec3{ 0, 0, 1 } };
-	CHECK(NearVec(HeadOffsetWorld(center, offset, level, true), Vec3{ 103.0, 204.0, 55.0 }));
-	CHECK(NearVec(HeadOffsetWorld(center, offset, level, false), Vec3{ 97.0, 204.0, 55.0 }));
+	CHECK(NearVec(HeadOffsetWorld(center, offset, level, Hand::Right), Vec3{ 103.0, 204.0, 55.0 }));
+	CHECK(NearVec(HeadOffsetWorld(center, offset, level, Hand::Left), Vec3{ 97.0, 204.0, 55.0 }));
 
 	// pitched 30 degrees down: forward dips, up leans forward
 	const double   p = 30.0 * kPi / 180.0;
 	const HeadAxes pitched{ Vec3{ 1, 0, 0 }, Vec3{ 0, std::cos(p), -std::sin(p) }, Vec3{ 0, std::sin(p), std::cos(p) } };
-	const Vec3     forwardOnly = HeadOffsetWorld(center, Vec3{ 0, 10, 0 }, pitched, true);
+	const Vec3     forwardOnly = HeadOffsetWorld(center, Vec3{ 0, 10, 0 }, pitched, Hand::Right);
 	CHECK(NearVec(forwardOnly, Vec3{ 100.0, 200.0 + 10.0 * std::cos(p), 50.0 - 10.0 * std::sin(p) }));
-	const Vec3 left = HeadOffsetWorld(center, offset, pitched, false);
-	const Vec3 right = HeadOffsetWorld(center, offset, pitched, true);
+	const Vec3 left = HeadOffsetWorld(center, offset, pitched, Hand::Left);
+	const Vec3 right = HeadOffsetWorld(center, offset, pitched, Hand::Right);
 	// the two hands differ only along the head's right axis, mirrored around its center
 	CHECK(Near(left.y, right.y));
 	CHECK(Near(left.z, right.z));
@@ -152,8 +153,8 @@ TEST_CASE("ParsePose refuses malformed requests")
 
 TEST_CASE("ReadyHand mirrors the hands and swings them left")
 {
-	const Vec3 left = ReadyHand(false, 1.11);
-	const Vec3 right = ReadyHand(true, 1.11);
+	const Vec3 left = ReadyHand(Hand::Left, 1.11);
+	const Vec3 right = ReadyHand(Hand::Right, 1.11);
 	CHECK(Near(left.y, 1.11 - kReadyBelow));
 	CHECK(Near(right.y, left.y));
 	// both in front, the swing puts the pair's middle left of center
@@ -193,8 +194,8 @@ TEST_CASE("FitTurn recovers the turn and TrackingFor inverts WorldFor")
 	const Vec3   hmdTracking{ 0.0, 1.11, 0.0 };
 	const Vec3   hmdWorld{ -1759.0, -1369.4, 115.1 };
 	const double theta = 66.71 * kPi / 180.0;
-	const Vec3   left = ReadyHand(false, 1.11);
-	const Vec3   right = ReadyHand(true, 1.11);
+	const Vec3   left = ReadyHand(Hand::Left, 1.11);
+	const Vec3   right = ReadyHand(Hand::Right, 1.11);
 	const double fitted = FitTurn(hmdTracking, hmdWorld,
 		{ HandSample{ left, WorldFor(theta, hmdTracking, hmdWorld, left, 70.0) }, HandSample{ right, WorldFor(theta, hmdTracking, hmdWorld, right, 70.0) } });
 	CHECK(Near(fitted, theta, 1e-9));
@@ -220,7 +221,7 @@ TEST_CASE("GameAxes and TrackingAxes swap OpenVR and world axes")
 
 TEST_CASE("MoveFrames eases from one held pose to another, then holds")
 {
-	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(false, 1.11), ReadyHand(true, 1.11) };
+	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(Hand::Left, 1.11), ReadyHand(Hand::Right, 1.11) };
 	HeldPose to = from;
 	to.headPitchDeg = -60.0;
 	to.left = Vec3{ -0.1, 0.55, -0.05 };
@@ -246,7 +247,7 @@ TEST_CASE("MoveFrames eases from one held pose to another, then holds")
 
 TEST_CASE("MoveFrames turns a controller to its aim with the move")
 {
-	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(false, 1.11), ReadyHand(true, 1.11) };
+	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(Hand::Left, 1.11), ReadyHand(Hand::Right, 1.11) };
 	HeldPose to = from;
 	to.leftAim = HandAim{ 123.0, 14.0 };
 
@@ -268,7 +269,7 @@ TEST_CASE("MoveFrames turns a controller to its aim with the move")
 
 TEST_CASE("MoveFrames turns the head's yaw with the move, at the eyes")
 {
-	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(false, 1.11), ReadyHand(true, 1.11) };
+	HeldPose from{ 1.11, kReadyHeadPitchDeg, ReadyHand(Hand::Left, 1.11), ReadyHand(Hand::Right, 1.11) };
 	HeldPose to = from;
 	to.headYawDeg = 40.0;
 

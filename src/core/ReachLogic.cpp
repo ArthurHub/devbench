@@ -433,7 +433,7 @@ namespace dvb::ReachLogic
 		return frame;
 	}
 
-	json CalibrationFrames(bool a_rightHand, const Pose& a_hmd, const Vec3& a_restTracking, const Vec3& a_otherHandTracking, double a_stepMeters)
+	json CalibrationFrames(Hand a_hand, const Pose& a_hmd, const Vec3& a_restTracking, const Vec3& a_otherHandTracking, double a_stepMeters)
 	{
 		json       frames = json::array();
 		int        packet = 1;
@@ -448,8 +448,8 @@ namespace dvb::ReachLogic
 			const Pose moving = Upright(Add(a_restTracking, legs[leg]));
 			for (int k = 0; k < 4; ++k) {
 				const long  tMs = static_cast<long>(leg) * kCalibrationLegMs + static_cast<long>(k) * kFrameStepMs;
-				const Pose& left = a_rightHand ? other : moving;
-				const Pose& right = a_rightHand ? moving : other;
+				const Pose& left = a_hand == Hand::Right ? other : moving;
+				const Pose& right = a_hand == Hand::Right ? moving : other;
 				frames.push_back(MakeFrame(tMs, packet, a_hmd, left, right));
 				++packet;
 			}

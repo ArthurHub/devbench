@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Hand.h"
 #include "core/Json.h"
 #include "core/ReachLogic.h"
 

@@ -69,10 +69,10 @@ namespace dvb::PoseLogic
 		}
 
 		/**
-		 * Reads one hand's placement. a_right picks the side yawIn turns toward the body from, so
+		 * Reads one hand's placement. a_hand picks the side yawIn turns toward the body from, so
 		 * the placement carries the tracking yaw.
 		 */
-		bool ReadHand(const json& a_value, const std::string& a_path, bool a_right, HandPlacement& a_out, std::string& a_error)
+		bool ReadHand(const json& a_value, const std::string& a_path, Hand a_hand, HandPlacement& a_out, std::string& a_error)
 		{
 			if (a_value.is_string()) {
 				if (a_value.get<std::string>() != "ready") {
@@ -106,7 +106,7 @@ namespace dvb::PoseLogic
 					double yawIn = 0.0;
 					if (!ReadNumber(a_value["yawIn"], a_path + ".yawIn", -kHandAimLimitDeg, kHandAimLimitDeg, yawIn, a_error))
 						return false;
-					aim.yawDeg = YawInToTracking(yawIn, a_right);
+					aim.yawDeg = YawInToTracking(yawIn, a_hand);
 				}
 				a_out.aim = aim;
 			}
@@ -284,7 +284,7 @@ namespace dvb::PoseLogic
 						return std::nullopt;
 					}
 					HandPlacement placement;
-					if (!ReadHand(value, "hands." + key, key == "right", placement, a_error))
+					if (!ReadHand(value, "hands." + key, key == "right" ? Hand::Right : Hand::Left, placement, a_error))
 						return std::nullopt;
 					(key == "left" ? request.left : request.right) = placement;
 				}
@@ -311,9 +311,9 @@ namespace dvb::PoseLogic
 	 * A world target moved by a head offset (outward, forward, up) along the head's axes,
 	 * outward being -right for the left hand and +right for the right one.
 	 */
-	Vec3 HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, bool a_right)
+	Vec3 HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, Hand a_hand)
 	{
-		const double outward = a_right ? a_headOffset.x : -a_headOffset.x;
+		const double outward = Mirrored(a_hand, a_headOffset.x);
 		return ReachLogic::Add(a_world, ReachLogic::Add(ReachLogic::Scale(a_axes.right, outward),
 											ReachLogic::Add(ReachLogic::Scale(a_axes.forward, a_headOffset.y), ReachLogic::Scale(a_axes.up, a_headOffset.z))));
 	}
@@ -322,15 +322,15 @@ namespace dvb::PoseLogic
 	 * The tracking yaw that turns a controller a_yawInDeg toward the body: tracking yaw turns
 	 * left when positive, so the left hand takes it negated.
 	 */
-	double YawInToTracking(double a_yawInDeg, bool a_right)
+	double YawInToTracking(double a_yawInDeg, Hand a_hand)
 	{
-		return a_right ? a_yawInDeg : -a_yawInDeg;
+		return Mirrored(a_hand, a_yawInDeg);
 	}
 
-	Vec3 ReadyHand(bool a_right, double a_eyeHeight)
+	Vec3 ReadyHand(Hand a_hand, double a_eyeHeight)
 	{
 		const double w = Radians(kHandYawDeg);
-		const double x = a_right ? kReadySide : -kReadySide;
+		const double x = Mirrored(a_hand, kReadySide);
 		const double z = -kReadyForward;
 		return Vec3{ x * std::cos(w) + z * std::sin(w), a_eyeHeight - kReadyBelow, -x * std::sin(w) + z * std::cos(w) };
 	}

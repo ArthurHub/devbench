@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Hand.h"
 #include "core/Json.h"
 #include "core/ReachLogic.h"
 
@@ -59,8 +60,8 @@ namespace dvb::PoseLogic
 		Vec3 up;
 	};
 
-	Vec3   HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, bool a_right);
-	double YawInToTracking(double a_yawInDeg, bool a_right);
+	Vec3   HeadOffsetWorld(const Vec3& a_world, const Vec3& a_headOffset, const HeadAxes& a_axes, Hand a_hand);
+	double YawInToTracking(double a_yawInDeg, Hand a_hand);
 
 	/// What head.lookAt aims at: a held or placed hand, the midpoint of both, a player node, or a
 	/// world point. It resolves once into head angles; the hold keeps the angles, not the target.
@@ -140,7 +141,7 @@ namespace dvb::PoseLogic
 	inline constexpr long kHoldStepMs = 1000;
 
 	/// A hand's place in the ready pose, in tracking meters, for an eye height.
-	Vec3 ReadyHand(bool a_right, double a_eyeHeight);
+	Vec3 ReadyHand(Hand a_hand, double a_eyeHeight);
 
 	/// A pose at a_position, pitched about X (negative looks down) after a yaw about Y (positive
 	/// turns left); facing -z at zero.

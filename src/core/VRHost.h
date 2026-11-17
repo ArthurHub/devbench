@@ -43,7 +43,7 @@ namespace dvb::vrhost
 	std::vector<std::string> PlatformActions();
 
 	/// World position of the in-game node Pose and Reach measure for one Controller.
-	ReachLogic::Vec3 ReachHandWorld(bool a_right);
+	ReachLogic::Vec3 ReachHandWorld(Hand a_hand);
 	/// World position of a Reach target node, looked up by name in a_root ("player" = body,
 	/// "firstPerson", empty = the platform's default order). Throws ToolError(404) when absent.
 	ReachLogic::Vec3 ReachNodeWorld(const std::string& a_name, const std::string& a_root = {});

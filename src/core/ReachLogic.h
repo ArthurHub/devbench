@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/Hand.h"
 #include "core/Json.h"
 
 namespace dvb::ReachLogic
@@ -122,7 +123,7 @@ namespace dvb::ReachLogic
 	/// Builds one vrTrackedSet frame; seq mirrors the 1-based packet number.
 	json MakeFrame(long a_tMs, int a_packet, const Pose& a_hmd, const Pose& a_left, const Pose& a_right);
 	/// Four legs of four frames; the calibrated hand moves +step along x, y, z.
-	json CalibrationFrames(bool a_rightHand, const Pose& a_hmd, const Vec3& a_restTracking, const Vec3& a_otherHandTracking, double a_stepMeters);
+	json CalibrationFrames(Hand a_hand, const Pose& a_hmd, const Vec3& a_restTracking, const Vec3& a_otherHandTracking, double a_stepMeters);
 	/// When to read the node after a leg's pose has settled.
 	long CalibrationSampleMs(int a_leg);
 	/// Milliseconds from the first frame to the last of ApproachAndHoldFrames for the same hold.

@@ -20,12 +20,12 @@ namespace dvb::vrhost
 		constexpr const char* kRightHandNode = "NPC R Hand [RHnd]";
 		constexpr const char* kLeftHandNode = "NPC L Hand [LHnd]";
 
-		RE::BSTrackedControllerDevice* ControllerDevice(bool a_right)
+		RE::BSTrackedControllerDevice* ControllerDevice(Hand a_hand)
 		{
 			auto* manager = RE::BSInputDeviceManager::GetSingleton();
 			if (!manager)
 				return nullptr;
-			return a_right ? manager->GetVRControllerRight() : manager->GetVRControllerLeft();
+			return a_hand == Hand::Right ? manager->GetVRControllerRight() : manager->GetVRControllerLeft();
 		}
 	}
 
@@ -57,8 +57,8 @@ namespace dvb::vrhost
 	 */
 	std::pair<std::uint32_t, std::uint32_t> SetControllerIndices(std::uint32_t a_left, std::uint32_t a_right)
 	{
-		auto* left = ControllerDevice(false);
-		auto* right = ControllerDevice(true);
+		auto* left = ControllerDevice(Hand::Left);
+		auto* right = ControllerDevice(Hand::Right);
 		if (!left || !right)
 			throw ToolError(503, "Skyrim VR controller devices are unavailable");
 		const std::pair previous{ left->GetRuntimeData().trackedDeviceIndex, right->GetRuntimeData().trackedDeviceIndex };
@@ -87,9 +87,9 @@ namespace dvb::vrhost
 		return ReachLogic::Vec3{ t.x, t.y, t.z };
 	}
 
-	ReachLogic::Vec3 ReachHandWorld(bool a_right)
+	ReachLogic::Vec3 ReachHandWorld(Hand a_hand)
 	{
-		return ReachNodeWorld(a_right ? kRightHandNode : kLeftHandNode);
+		return ReachNodeWorld(a_hand == Hand::Right ? kRightHandNode : kLeftHandNode);
 	}
 
 	double PlayerYaw()

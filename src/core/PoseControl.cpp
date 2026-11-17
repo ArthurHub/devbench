@@ -109,8 +109,8 @@ namespace dvb::PoseControl
 			const json result = dvb::MainThread::RunAndWait([]() -> json {
 				return json{
 					{ "hmd", Vec3Json(vrhost::HmdWorld()) },
-					{ "left", Vec3Json(vrhost::ReachHandWorld(false)) },
-					{ "right", Vec3Json(vrhost::ReachHandWorld(true)) },
+					{ "left", Vec3Json(vrhost::ReachHandWorld(Hand::Left)) },
+					{ "right", Vec3Json(vrhost::ReachHandWorld(Hand::Right)) },
 				};
 			});
 			return Reading{ Vec3From(result.at("hmd")), Vec3From(result.at("left")), Vec3From(result.at("right")) };
@@ -133,7 +133,7 @@ namespace dvb::PoseControl
 		 * A node or world placement as a world point, read on the main thread. A head offset
 		 * reads the HMD's axes now, so it follows the head as posed.
 		 */
-		RL::Vec3 WorldTarget(const PL::HandPlacement& a_placement, bool a_right)
+		RL::Vec3 WorldTarget(const PL::HandPlacement& a_placement, Hand a_hand)
 		{
 			if (a_placement.kind == PL::HandPlacement::Kind::kWorld) {
 				if (!a_placement.headOffset)
@@ -143,7 +143,7 @@ namespace dvb::PoseControl
 					return json{ { "right", Vec3Json(a.right) }, { "forward", Vec3Json(a.forward) }, { "up", Vec3Json(a.up) } };
 				});
 				const PL::HeadAxes head{ Vec3From(axes.at("right")), Vec3From(axes.at("forward")), Vec3From(axes.at("up")) };
-				return PL::HeadOffsetWorld(a_placement.world, *a_placement.headOffset, head, a_right);
+				return PL::HeadOffsetWorld(a_placement.world, *a_placement.headOffset, head, a_hand);
 			}
 			const json     result = dvb::MainThread::RunAndWait([a_placement]() -> json {
 				const double yaw = vrhost::PlayerYaw();
@@ -155,13 +155,13 @@ namespace dvb::PoseControl
 		}
 
 		/// Where a hand will be, for lookAt: its target in this call, else where its Wand is now.
-		RL::Vec3 HandLookPoint(const std::optional<PL::HandPlacement>& a_placement, bool a_right, const Held& a_held, const Reading& a_reading, double a_theta)
+		RL::Vec3 HandLookPoint(const std::optional<PL::HandPlacement>& a_placement, Hand a_hand, const Held& a_held, const Reading& a_reading, double a_theta)
 		{
 			if (!a_placement)
-				return a_right ? a_reading.right : a_reading.left;
+				return a_hand == Hand::Right ? a_reading.right : a_reading.left;
 			if (a_placement->kind == PL::HandPlacement::Kind::kReady)
-				return PL::WorldFor(a_theta, HmdTracking(a_held), a_reading.hmd, PL::ReadyHand(a_right, a_held.pose.eyeHeight), a_held.unitsPerMeter);
-			return WorldTarget(*a_placement, a_right);
+				return PL::WorldFor(a_theta, HmdTracking(a_held), a_reading.hmd, PL::ReadyHand(a_hand, a_held.pose.eyeHeight), a_held.unitsPerMeter);
+			return WorldTarget(*a_placement, a_hand);
 		}
 
 		/**
@@ -172,11 +172,11 @@ namespace dvb::PoseControl
 		{
 			switch (a_look.kind) {
 			case PL::HeadLook::Kind::kLeft:
-				return HandLookPoint(a_request.left, false, a_held, a_reading, a_theta);
+				return HandLookPoint(a_request.left, Hand::Left, a_held, a_reading, a_theta);
 			case PL::HeadLook::Kind::kRight:
-				return HandLookPoint(a_request.right, true, a_held, a_reading, a_theta);
+				return HandLookPoint(a_request.right, Hand::Right, a_held, a_reading, a_theta);
 			case PL::HeadLook::Kind::kHands:
-				return RL::Scale(RL::Add(HandLookPoint(a_request.left, false, a_held, a_reading, a_theta), HandLookPoint(a_request.right, true, a_held, a_reading, a_theta)), 0.5);
+				return RL::Scale(RL::Add(HandLookPoint(a_request.left, Hand::Left, a_held, a_reading, a_theta), HandLookPoint(a_request.right, Hand::Right, a_held, a_reading, a_theta)), 0.5);
 			case PL::HeadLook::Kind::kWorld:
 				return a_look.world;
 			case PL::HeadLook::Kind::kNode:
@@ -203,7 +203,7 @@ namespace dvb::PoseControl
 			held.unitsPerMeter = stanceJson.at("unitsPerMeter").get<double>();
 			const double camera = a_request.cameraHeight.value_or(stanceJson.at("camera").get<double>());
 			const double eye = a_request.eyeHeight.value_or(PL::EyeHeightFor(camera, stanceJson.at("roomLift").get<double>(), held.unitsPerMeter));
-			held.pose = PL::HeldPose{ eye, PL::kReadyHeadPitchDeg, PL::ReadyHand(false, eye), PL::ReadyHand(true, eye) };
+			held.pose = PL::HeldPose{ eye, PL::kReadyHeadPitchDeg, PL::ReadyHand(Hand::Left, eye), PL::ReadyHand(Hand::Right, eye) };
 			Play(held, PL::MoveFrames(held.pose, held.pose, 0, a_request.holdMs), !a_replaceToken.empty(), a_ctx);
 			std::this_thread::sleep_for(std::chrono::milliseconds(kSettleMs));
 			return held;
@@ -315,19 +315,19 @@ namespace dvb::PoseControl
 		if (mapped) {
 			const Reading reading = Read();
 			theta = Turn(held, reading);
-			const auto place = [&](const std::optional<PL::HandPlacement>& a_placement, bool a_right, RL::Vec3& a_tracking, std::optional<RL::Vec3>& a_target) {
+			const auto place = [&](const std::optional<PL::HandPlacement>& a_placement, Hand a_hand, RL::Vec3& a_tracking, std::optional<RL::Vec3>& a_target) {
 				if (!a_placement || a_placement->kind == PL::HandPlacement::Kind::kReady)
 					return;
-				a_target = WorldTarget(*a_placement, a_right);
+				a_target = WorldTarget(*a_placement, a_hand);
 				a_tracking = PL::TrackingFor(theta, HmdTracking(held), reading.hmd, *a_target, held.unitsPerMeter);
 			};
-			place(request.left, false, to.left, targetLeft);
-			place(request.right, true, to.right, targetRight);
+			place(request.left, Hand::Left, to.left, targetLeft);
+			place(request.right, Hand::Right, to.right, targetRight);
 		}
 		if (request.left && request.left->kind == PL::HandPlacement::Kind::kReady)
-			to.left = PL::ReadyHand(false, held.pose.eyeHeight);
+			to.left = PL::ReadyHand(Hand::Left, held.pose.eyeHeight);
 		if (request.right && request.right->kind == PL::HandPlacement::Kind::kReady)
-			to.right = PL::ReadyHand(true, held.pose.eyeHeight);
+			to.right = PL::ReadyHand(Hand::Right, held.pose.eyeHeight);
 		// a placed hand points the way it asks, else the ready way; the Wand sits at the controller either way
 		if (request.left)
 			to.leftAim = request.left->aim.value_or(PL::kReadyAim);
