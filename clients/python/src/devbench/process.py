@@ -33,7 +33,6 @@ _INTERVAL = 0.25
 _LAUNCH_INTERVAL = 1.0
 
 # the longest one call may take while launch waits: a fresh game can take seconds to answer a new connection
-# (docs/plans/server-latency/issues/01-new-connection-waits.md)
 _LAUNCH_CALL_TIMEOUT = 30.0
 
 # the per-call timeout of the client launch returns, Devbench's default

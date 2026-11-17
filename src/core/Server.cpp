@@ -25,6 +25,15 @@ namespace
 {
 	std::atomic<int> g_boundPort{ 0 };
 
+	// httplib gives each connection one worker for its whole life, idle keep-alive waits and
+	// /mcp event streams included, and queues new connections without limit when all are busy.
+	// Its default pool (cores - 1, at least 8) is held by a dozen polling bridges alone, so a new
+	// connection's first answer then waits seconds.
+	constexpr std::size_t kHttpWorkers = 64;
+	// Seconds an idle kept-alive connection holds its worker. A loopback reconnect costs under a
+	// millisecond, so a short wait only frees workers sooner; httplib's default is 5.
+	constexpr time_t kKeepAliveSeconds = 2;
+
 	// Process-wide registry pointer so dvb::RunTool can invoke tools from the in-game menu (a
 	// separate render-thread TU) without a Server reference. Atomic: written on the SKSE thread
 	// (Start/Stop), read on the render thread (RunTool). Set/cleared by Server::Start/Stop.
@@ -158,6 +167,8 @@ namespace dvb
 			// before giving up with an empty 400. Shorten this so that mistake fails fast
 			// instead of stalling; GET /api/health is the real fix for liveness checks.
 			http->set_read_timeout(2, 0);
+			http->new_task_queue = [] { return new httplib::ThreadPool(kHttpWorkers); };
+			http->set_keep_alive_timeout(kKeepAliveSeconds);
 			// Runs before every route, cpp-mcp's included: its CORS preflight answer allows any
 			// origin, so without this a web page could drive /mcp and read the replies.
 			http->set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
