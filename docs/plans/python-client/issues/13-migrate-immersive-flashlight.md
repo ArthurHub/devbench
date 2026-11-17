@@ -11,7 +11,7 @@ Replace `devbench.py`, `backup.py`, `report.py` and the shared conftest code wit
 `Hands`; the conftest keeps the mod's fixtures (`loadout`, `flashlight`, `weapon`) and defines `DEVBENCH`. The
 requirements line pins a devbench commit on the fork
 (`git+https://github.com/ArthurHub/devbench@<sha>#subdirectory=clients/python`): the fork has no tags until ticket 17.
-Once `fo4-v1.0.0` is released, the pin moves to `@fo4-v1.0.0`.
+Once `fo4-v1.32.0` is released, the pin moves to `@fo4-v1.32.0`.
 
 ## Acceptance
 

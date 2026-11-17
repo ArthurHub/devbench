@@ -1,12 +1,12 @@
-# Fallout release for the ArthurHub fork. Pushing a fo4-vX.Y.Z tag on main builds devbench.dll (Fallout 4 and
-# Fallout 4 VR, one DLL) and the bridge exe, packs them as an MO2-ready archive and creates a DRAFT GitHub
-# Release with it attached; publishing the draft is manual.
+# Fallout release. Pushing a fo4-vX.Y.Z tag on main builds devbench.dll (Fallout 4 and Fallout 4 VR, one DLL)
+# and the bridge exe, packs them as an MO2-ready archive and creates a DRAFT GitHub Release with it attached;
+# publishing the draft is manual.
 #
-# The fork numbers its releases itself (fo4-v1.0.0, ...). Only the displayed version follows the tag: the build
-# passes it as DEVBENCH_VERSION, the version files keep upstream's number, and so does GetBuildNumber(), which
-# mods compare against before calling late API slots. The Python client (setuptools-scm, `--match fo4-v*`)
-# resolves the same tag to the same version. Upstream's release.yaml (alandtse, semantic-release, Skyrim) is
-# untouched; this file has no upstream counterpart, so merges never conflict on it.
+# The version is the one in CMakeLists.txt, never bumped here: the tag must carry it, and the `fo4-` prefix only
+# keeps the tag apart from the Skyrim release's vX.Y.Z. That number is also GetBuildNumber(), which mods compare
+# before calling late API slots, so a Fallout release must not invent one. The Python client (setuptools-scm,
+# `--match fo4-v*`) resolves the same tag to the same version. Skyrim's release.yaml (semantic-release, push to
+# main) is a separate pipeline; neither triggers the other.
 #
 # Release notes: the tag's annotation (`git tag -a`), else the commit subjects since the previous fo4-v tag.
 name: Release (Fallout)
@@ -26,7 +26,6 @@ jobs:
   check:
     name: Check the tag
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'ArthurHub'
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -36,7 +35,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Tag is fo4-vX.Y.Z on main
+      - name: Tag is fo4-vX.Y.Z on main, X.Y.Z the CMakeLists.txt version
         id: tag
         env:
           TAG: ${{ github.ref_name }}
@@ -46,11 +45,17 @@ jobs:
             echo "::error::$TAG is not fo4-vX.Y.Z"
             exit 1
           fi
+          version="${BASH_REMATCH[1]}"
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$TAG ($GITHUB_SHA) is not on main"
             exit 1
           fi
-          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          file=$(sed -nE 's/^set\(VERSION ([0-9]+\.[0-9]+\.[0-9]+)\)$/\1/p' CMakeLists.txt)
+          if [ "$file" != "$version" ]; then
+            echo "::error::$TAG does not match CMakeLists.txt's VERSION ($file); tag fo4-v$file instead"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build
@@ -58,7 +63,6 @@ jobs:
     uses: ./.github/workflows/_build-fallout.yaml
     with:
       ref: ${{ github.ref_name }}
-      version: ${{ needs.check.outputs.version }}
 
   release:
     name: Package & draft release
@@ -132,7 +136,7 @@ jobs:
           elif prev=$(git describe --tags --abbrev=0 --match 'fo4-v*' "$TAG^" 2>/dev/null); then
             { echo "Changes since $prev:"; echo; git log --no-merges --format='- %s' "$prev..$TAG"; } > notes.md
           else
-            echo "First Fallout release from the ArthurHub fork." > notes.md
+            echo "First Fallout release." > notes.md
           fi
           cat notes.md
 

@@ -1,4 +1,4 @@
-# Reusable Fallout build for the ArthurHub fork: compiles devbench.dll for Fallout 4 / Fallout 4 VR
+# Reusable Fallout build: compiles devbench.dll for Fallout 4 / Fallout 4 VR
 # (one DLL for both) with the CMake fallout4-vs2022 preset, vcpkg and the extern/CommonLibF4 submodule, plus
 # the standalone devbench-bridge.exe, uploading each as its own artifact. Called by release-fallout.yaml.
 #
@@ -17,10 +17,6 @@ on:
         description: "Git ref to build. Empty = the triggering commit."
         type: string
         default: ""
-      version:
-        description: "Displayed version (DEVBENCH_VERSION, X.Y.Z). Empty = derived from git describe."
-        type: string
-        default: ""
       artifact-name:
         description: "Name for the uploaded binaries artifact."
         type: string
@@ -32,13 +28,8 @@ on:
       bridge-artifact-name:
         description: "Artifact name the bridge exe was uploaded under."
         value: ${{ inputs.artifact-name }}-bridge
-  # A trial build on the fork before pushing a release tag (`gh workflow run _build-fallout.yaml`).
+  # A trial build before pushing a release tag (`gh workflow run _build-fallout.yaml`).
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Displayed version (X.Y.Z). Empty = derived from git describe."
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -51,12 +42,10 @@ jobs:
       VCPKG_ROOT: C:\vcpkg
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-cache,readwrite
     steps:
-      # Full history so git describe (the fallback version) sees the fo4-v tags.
       - name: Checkout
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0
           persist-credentials: false
 
       # Only the two submodules the Fallout build uses; lib/commonlibsse-ng is Skyrim's and large.
@@ -87,15 +76,7 @@ jobs:
             vcpkg-fallout-${{ runner.os }}-
 
       - name: Configure
-        run: cmake --preset fallout4-vs2022 "-DDEVBENCH_VERSION=${{ inputs.version }}"
-
-      # A release must compile the version it was asked for into the DLL (`ping`, the load log).
-      - name: Check the version string
-        if: inputs.version != ''
-        shell: pwsh
-        run: |
-          $line = Select-String -Path build/vs2022/include/Version.h -Pattern 'DEVBENCH_VERSION_STRING'
-          if ($line.Line -notmatch '"${{ inputs.version }}"') { throw "Version.h has $($line.Line)" }
+        run: cmake --preset fallout4-vs2022
 
       - name: Build
         run: cmake --build --preset fallout4-vs2022 --target devbench

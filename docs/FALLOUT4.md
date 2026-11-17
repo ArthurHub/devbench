@@ -79,31 +79,32 @@ separated by `;` — the twin of the Skyrim build's `SkyrimPluginTargets`.
 
 ## Releasing
 
-Fallout releases come from the ArthurHub fork, under its own numbering: `fo4-v1.0.0`,
-`fo4-v1.0.1`, ... Upstream's releases (alandtse, `vX.Y.Z`, Skyrim) are separate.
+A Fallout release uses the version already in `CMakeLists.txt` and is tagged `fo4-vX.Y.Z`;
+the prefix only keeps the tag apart from the Skyrim release's `vX.Y.Z`. The two pipelines are
+independent: `release-fallout.yaml` runs only on a `fo4-v*` tag push, Skyrim's `release.yaml`
+only on its own repository's `main`.
 
-1. Get the release commit onto `main` of the fork.
-2. Optionally, trial-build it first: `gh workflow run _build-fallout.yaml -f version=X.Y.Z`.
-3. Tag and push: `git tag -a fo4-vX.Y.Z -m "<release notes>" && git push origin fo4-vX.Y.Z`.
+1. Get the release commit onto `main`.
+2. Optionally, trial-build it first: `gh workflow run _build-fallout.yaml`.
+3. Tag and push, with X.Y.Z the `set(VERSION ...)` in `CMakeLists.txt`:
+   `git tag -a fo4-vX.Y.Z -m "<release notes>" && git push origin fo4-vX.Y.Z`.
    The tag's message becomes the release notes; a lightweight tag gets the commit subjects
    since the previous `fo4-v` tag instead.
-4. `release-fallout.yaml` checks the tag (`fo4-vX.Y.Z`, on `main`), builds with the
-   `fallout4-vs2022` preset, checks the Python client resolves the same version, and creates
-   a **draft** GitHub Release. Review the draft and publish it.
+4. `release-fallout.yaml` checks the tag (`fo4-vX.Y.Z`, on `main`, X.Y.Z the `CMakeLists.txt`
+   version), builds with the `fallout4-vs2022` preset, checks the Python client resolves the
+   same version, and creates a **draft** GitHub Release. Review the draft and publish it.
 
 The archive, `devbench-fo4-vX.Y.Z.7z`, has `F4SE/` at its root so MO2 installs it as a mod:
 `F4SE/Plugins/devbench.dll` and `.pdb`, and `F4SE/Plugins/devbench/devbench-bridge.exe`.
 One archive serves Fallout 4 and Fallout 4 VR.
 
-**Which number changes.** Only the displayed version follows the tag: `ping`, the load log
-line and the Python package (`devbench-client`, through setuptools-scm). `CMakeLists.txt`,
-`vcpkg.json` and `xmake.lua` keep upstream's version, and so does `GetBuildNumber()`
-(`MAJOR*10000 + MINOR*100 + PATCH`), because mods compare it against `10500`, `12000`, ...
-before calling late API slots; a fork number there would make them skip slots that exist.
-For the same reason the fork never appends API slots on its own. Local builds without a
-version passed derive the string from `git describe --match "fo4-v*"` at configure time, in
-setuptools-scm's format (`1.0.1.dev5+gabc1234`), and fall back to the file's version when
-there is no `fo4-v` tag (`cmake/fork-version.cmake`).
+**The version is never bumped for a Fallout release.** It is also `GetBuildNumber()`
+(`MAJOR*10000 + MINOR*100 + PATCH`), which mods compare against `10500`, `12000`, ... before
+calling late API slots, so it moves only with the version files (`CMakeLists.txt`,
+`vcpkg.json`, `xmake.lua`) as upstream bumps them. A Fallout release that needs a new number
+waits for that bump. `ping` and the load log always show the file's version; the Python
+package (`devbench-client`, setuptools-scm) shows the tag's on the tag and
+`X.Y.(Z+1).devN+g<hash>` past it.
 
 ## Connect an MCP client
 
