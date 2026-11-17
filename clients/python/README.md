@@ -144,10 +144,12 @@ if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
     with hands:  # starts in the ready pose; always stops, handing the devices back
         answer = hands.place("left", [x, y, z], pitch=10, yaw=10)  # devbench's answer: corrections, hands
         hands.place("offhand", center, head_offset=(5, 0, -3), yaw_in=25)  # mirrors for either hand
+        hands.turn("offhand", pitch=-70)  # points the controller down, its wand where it was
         hands.head("down")  # "ready", "down" or {pitch?, yaw?, lookAt?, ...}
         hands.tap("left")  # press("left", ["trigger"], 100); returns once released
         hands.long_press("right", ["grip"])  # 1000 ms
         hands.stick("primary", 0, -1, 600)  # thumbstick down 600 ms, back to center; the pose stays
+        hands.press(("primary", "offhand"), ["thumbstick"], 1500)  # both hands together, one wait
         hands.rest()  # hands and head back in the ready pose
         hands.pose(hands={"right": {"node": "LArm_Hand", "front": 10}})  # any other pose arguments
 ```
@@ -157,6 +159,10 @@ the game's handedness when the call arrives; any other name raises `ValueError`.
 `input` tool takes them. `head_offset` (outward, forward, up) moves the point along the head's axes as posed, outward
 toward the hand's own side, and `yaw_in` replaces `yaw` with a turn toward the body (in tracking space, mirrored around
 the body's forward), so one recorded placement fits either hand and either handedness. `TAP_MS` (100) and `LONG_PRESS_MS` (1000) are F4VR-CommonFramework's gesture thresholds.
+`turn` changes only how a controller points: it places the hand at the last pose's target for it (else where its wand
+was read, kept in `hands.placed` per physical hand) with the given `pitch` / `yaw`, the other angle unchanged; a role
+costs one handedness call, and a turn before any pose raises `RuntimeError`. `press`, `stick`, `tap` and `long_press`
+take a list of hands to press them together (each hand has its own press slot in devbench), checked before any is sent.
 A press without a hold of this owner (it never started, or the hold ran out) raises `DevbenchError` (409). `stop`
 ignores a refused stop, and on an exception inside the `with` it never hides that exception.
 

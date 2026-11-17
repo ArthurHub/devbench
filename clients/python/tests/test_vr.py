@@ -1,6 +1,6 @@
 """
-VR hands: the token kept and passed to stop, stop on an exception, a refused stop, the pose arguments, presses, the hand
-names, and the handedness getter and setter.
+VR hands: the token kept and passed to stop, stop on an exception, a refused stop, the pose arguments, turning a
+controller in place, presses on one hand or several, the hand names, and the handedness getter and setter.
 """
 
 import pytest
@@ -10,7 +10,10 @@ from devbench import DevbenchError, Hands
 
 
 class _Input:
-    """A scripted input tool: pose answers a token, stop and press answer ok or as refuse says."""
+    """
+    A scripted input tool: pose answers a token and both hands (a world target lands exactly, with its target), stop
+    and press answer ok or as refuse says.
+    """
 
     def __init__(self):
         self.calls = []
@@ -18,6 +21,10 @@ class _Input:
         self.refuse = set()
         self.tracked = {"available": True, "ready": True}
         self.left_handed = False
+        self.hands = {
+            "left": {"wand": [-10.0, 20.0, 100.0], "pitch": 0.0, "yaw": 5.0},
+            "right": {"wand": [10.0, 20.0, 100.0], "pitch": 0.0, "yaw": -5.0},
+        }
 
     def __call__(self, args):
         self.calls.append(args)
@@ -32,7 +39,21 @@ class _Input:
             was, self.left_handed = self.left_handed, args["leftHanded"]
             return {"leftHanded": self.left_handed, "was": was, "changed": was != self.left_handed, "elapsedMs": 200}
         if action == "pose":
-            return {"controlToken": self.token, "fresh": True, "corrections": 1}
+            hands = {
+                side: {key: value for key, value in hand.items() if key != "target"}
+                for side, hand in self.hands.items()
+            }
+            if isinstance(args.get("hands"), dict):
+                for side, target in args["hands"].items():
+                    if side in ("primary", "offhand"):
+                        primary = "left" if self.left_handed else "right"
+                        side = primary if side == "primary" else ("right" if primary == "left" else "left")
+                    hand = hands[side]
+                    if "world" in target:
+                        hand["wand"] = hand["target"] = target["world"]
+                    hand.update({key: target[key] for key in ("pitch", "yaw") if key in target})
+            self.hands = hands
+            return {"controlToken": self.token, "fresh": True, "corrections": 1, "hands": hands}
         return {"ok": True}
 
     def actions(self):
@@ -187,6 +208,71 @@ def test_place_and_press_reject_an_unknown_hand(bench, tool, slept, hand):
     assert slept == []
 
 
+def test_turn_keeps_the_wand_and_changes_the_given_angle(bench, tool):
+    hands = Hands(bench, "e2e")
+    hands.start()
+
+    hands.turn("right", pitch=-70, move_ms=0)
+
+    assert tool.calls[-1] == {
+        "action": "pose",
+        "owner": "e2e",
+        "hands": {"right": {"world": [10.0, 20.0, 100.0], "pitch": -70, "yaw": -5.0}},
+        "moveMs": 0,
+    }
+    assert hands.placed["right"]["pitch"] == -70
+
+
+def test_turn_keeps_the_last_target_not_the_reading(bench, tool):
+    hands = Hands(bench, "e2e")
+    hands.place("left", [1, 2, 3])
+    tool.hands["left"]["wand"] = [1.2, 2.0, 3.0]  # the next reading lands off the target
+
+    hands.turn("left", yaw=30)
+    hands.turn("left", yaw=40)
+
+    assert [call["hands"]["left"]["world"] for call in tool.calls[1:]] == [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]
+
+
+@pytest.mark.parametrize(
+    ("left_handed", "hand", "side"),
+    [(False, "primary", "right"), (True, "primary", "left"), (False, "offhand", "left"), (True, "offhand", "right")],
+)
+def test_turn_resolves_a_role_through_the_handedness(bench, tool, left_handed, hand, side):
+    tool.left_handed = left_handed
+    hands = Hands(bench, "e2e")
+    hands.start()
+
+    hands.turn(hand, pitch=10)
+
+    assert tool.calls[-2] == {"action": "handedness"}
+    assert list(tool.calls[-1]["hands"]) == [side]
+    assert tool.calls[-1]["hands"][side]["world"] == tool.hands[side]["wand"]
+
+
+def test_turn_needs_a_pose_first(bench, tool):
+    hands = Hands(bench, "e2e")
+
+    with pytest.raises(RuntimeError, match="needs a pose"):
+        hands.turn("left", pitch=0)
+    hands.start()
+    hands.stop()
+    with pytest.raises(RuntimeError, match="needs a pose"):
+        hands.turn("left", pitch=0)
+
+    assert tool.actions() == ["pose", "stop"]
+
+
+def test_turn_rejects_an_unknown_hand(bench, tool):
+    hands = Hands(bench, "e2e")
+    hands.start()
+
+    with pytest.raises(ValueError, match="left, right, primary, offhand"):
+        hands.turn("both", pitch=0)
+
+    assert tool.actions() == ["pose"]
+
+
 def test_head_sends_a_preset_or_a_pose(bench, tool):
     hands = Hands(bench, "e2e")
 
@@ -227,6 +313,42 @@ def test_stick_rejects_an_unknown_hand(bench, tool, slept):
         Hands(bench, "e2e").stick("both", 1, 0)
 
     assert tool.calls == []
+
+
+def test_press_on_several_hands_overlaps_and_waits_once(bench, tool, slept):
+    Hands(bench, "e2e").press(("primary", "offhand"), ["thumbstick"], 1500)
+
+    assert [(call["hand"], call["buttons"], call["durationMs"]) for call in tool.calls] == [
+        ("primary", ["thumbstick"], 1500),
+        ("offhand", ["thumbstick"], 1500),
+    ]
+    assert slept == [pytest.approx(1.6)]
+
+
+def test_stick_and_tap_take_several_hands(bench, tool, slept):
+    hands = Hands(bench, "e2e")
+
+    hands.stick(["left", "right"], 0, 1)
+    hands.tap(["left", "right"], ["a"])
+
+    assert [(call["hand"], call.get("stick"), call.get("buttons")) for call in tool.calls] == [
+        ("left", [0.0, 1.0], None),
+        ("right", [0.0, 1.0], None),
+        ("left", None, ["a"]),
+        ("right", None, ["a"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("hands", "error"),
+    [(["left", "both"], "left, right, primary, offhand"), (["left", "left"], "given twice"), ([], "no hand")],
+)
+def test_several_hands_are_all_checked_before_any_press(bench, tool, slept, hands, error):
+    with pytest.raises(ValueError, match=error):
+        Hands(bench, "e2e").press(hands)
+
+    assert tool.calls == []
+    assert slept == []
 
 
 def test_tap_and_long_press_use_the_framework_thresholds(bench, tool, slept):

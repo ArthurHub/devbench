@@ -34,6 +34,21 @@ def _check_hand(hand: str) -> None:
         raise ValueError(f"hand must be one of {', '.join(_HANDS)}, not {hand!r}")
 
 
+def _hand_list(hand: str | Sequence[str]) -> list[str]:
+    """
+    One hand name or several as a list, each checked; a name given twice raises ValueError. Nothing is sent before
+    every name has passed.
+    """
+    hands = [hand] if isinstance(hand, str) else list(hand)
+    if not hands:
+        raise ValueError("no hand given")
+    for name in hands:
+        _check_hand(name)
+    if len(set(hands)) != len(hands):
+        raise ValueError(f"a hand is given twice: {hands}")
+    return hands
+
+
 def check_handedness(value: str) -> Handedness:
     """Return value as a Handedness; raise ValueError for anything but "left" / "right"."""
     if value not in HANDEDNESS:
@@ -75,6 +90,9 @@ class Hands:
         self.owner = owner
         self.hold_ms = hold_ms
         self.token: str | None = None
+        # the last pose answer's hands: per physical hand (left / right) its wand, pitch, yaw and, when that pose
+        # placed it, target
+        self.placed: dict[str, dict[str, Any]] = {}
 
     def __enter__(self) -> Hands:
         self.start()
@@ -112,8 +130,9 @@ class Hands:
     def stop(self) -> None:
         """
         Hand the devices back to the physical ones. Without a token it does nothing; a refused stop (the hold ran out,
-        or another sequence took the devices) is ignored. The token is cleared either way.
+        or another sequence took the devices) is ignored. The token and the placed hands are cleared either way.
         """
+        self.placed = {}
         if self.token is None:
             return
         token, self.token = self.token, None
@@ -125,12 +144,14 @@ class Hands:
     def pose(self, **args: Any) -> dict[str, Any]:
         """
         One input pose call as this owner with the tool's own arguments (hands, head, holdMs, ...), keeping its
-        control token for stop. hold_ms fills holdMs when args leave it out. Returns devbench's answer.
+        control token for stop and its hands for turn. hold_ms fills holdMs when args leave it out. Returns devbench's
+        answer.
         """
         if self.hold_ms is not None:
             args.setdefault("holdMs", self.hold_ms)
         answer = self.bench.tool("input", action="pose", owner=self.owner, **args)
         self.token = answer.get("controlToken") or self.token
+        self.placed = answer.get("hands") or self.placed
         return answer
 
     def place(
@@ -167,6 +188,31 @@ class Hands:
         options = {"corrections": corrections, "toleranceUnits": tolerance, "moveMs": move_ms}
         return self.pose(hands={hand: target}, **{key: value for key, value in options.items() if value is not None})
 
+    def turn(
+        self, hand: str, *, pitch: float | None = None, yaw: float | None = None, move_ms: int | None = None
+    ) -> dict[str, Any]:
+        """
+        Point a hand's controller (left / right / primary / offhand) to pitch / yaw (degrees; the one left out stays)
+        with its wand kept where the last pose put it: that pose's target for the hand, else where its wand was read.
+        A role is resolved through the game's handedness (one more call). Needs a pose of this Hands first
+        (RuntimeError). Returns devbench's answer.
+        """
+        _check_hand(hand)
+        if not self.placed:
+            raise RuntimeError("turn needs a pose of this Hands first (start, place or pose)")
+        side = hand
+        if hand in ("primary", "offhand"):
+            primary = handedness(self.bench)
+            side = primary if hand == "primary" else ("left" if primary == "right" else "right")
+        held = self.placed[side]
+        return self.place(
+            side,
+            held.get("target") or held["wand"],
+            pitch=held["pitch"] if pitch is None else pitch,
+            yaw=held["yaw"] if yaw is None else yaw,
+            move_ms=move_ms,
+        )
+
     def head(self, preset_or_pose: str | dict[str, Any]) -> dict[str, Any]:
         """
         Turn the head: a preset ("ready", "down") or {pitch?, yaw?, lookAt?, ...} as the input tool takes it.
@@ -174,34 +220,36 @@ class Hands:
         """
         return self.pose(head=preset_or_pose)
 
-    def press(self, hand: str, buttons: Sequence[str] = ("trigger",), duration_ms: int = TAP_MS) -> None:
+    def press(
+        self, hand: str | Sequence[str], buttons: Sequence[str] = ("trigger",), duration_ms: int = TAP_MS
+    ) -> None:
         """
-        Hold buttons (trigger, grip, a, b, thumbstick) on a hand (left / right / primary / offhand) for duration_ms on
-        top of the hold, and return once they are released. Without a hold of this owner devbench answers 409
-        (DevbenchError).
+        Hold buttons (trigger, grip, a, b, thumbstick) on a hand (left / right / primary / offhand), or on several
+        hands together, for duration_ms on top of the hold, and return once they are released. Without a hold of this
+        owner devbench answers 409 (DevbenchError).
         """
-        _check_hand(hand)
-        self.bench.tool(
-            "input", action="press", owner=self.owner, hand=hand, buttons=list(buttons), durationMs=duration_ms
-        )
+        for name in _hand_list(hand):
+            self.bench.tool(
+                "input", action="press", owner=self.owner, hand=name, buttons=list(buttons), durationMs=duration_ms
+            )
         time.sleep(duration_ms / 1000 + _RELEASE_MARGIN)
 
-    def stick(self, hand: str, x: float, y: float, duration_ms: int = TAP_MS) -> None:
+    def stick(self, hand: str | Sequence[str], x: float, y: float, duration_ms: int = TAP_MS) -> None:
         """
-        Push a hand's (left / right / primary / offhand) thumbstick to x, y (each -1..1; x right, y up) for duration_ms
-        on top of the hold, and return once it is back at center. The pose does not move, so a ray stays where it
-        points. Without a hold of this owner devbench answers 409 (DevbenchError).
+        Push a hand's (left / right / primary / offhand) thumbstick, or several hands' together, to x, y (each -1..1;
+        x right, y up) for duration_ms on top of the hold, and return once it is back at center. The pose does not
+        move, so a ray stays where it points. Without a hold of this owner devbench answers 409 (DevbenchError).
         """
-        _check_hand(hand)
-        self.bench.tool(
-            "input", action="press", owner=self.owner, hand=hand, stick=[float(x), float(y)], durationMs=duration_ms
-        )
+        for name in _hand_list(hand):
+            self.bench.tool(
+                "input", action="press", owner=self.owner, hand=name, stick=[float(x), float(y)], durationMs=duration_ms
+            )
         time.sleep(duration_ms / 1000 + _RELEASE_MARGIN)
 
-    def tap(self, hand: str, buttons: Sequence[str] = ("trigger",)) -> None:
+    def tap(self, hand: str | Sequence[str], buttons: Sequence[str] = ("trigger",)) -> None:
         """A press short enough to count as a tap (TAP_MS)."""
         self.press(hand, buttons, TAP_MS)
 
-    def long_press(self, hand: str, buttons: Sequence[str] = ("trigger",)) -> None:
+    def long_press(self, hand: str | Sequence[str], buttons: Sequence[str] = ("trigger",)) -> None:
         """A press long enough to count as a long press (LONG_PRESS_MS)."""
         self.press(hand, buttons, LONG_PRESS_MS)
