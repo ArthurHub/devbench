@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from devbench.checks import version_numbers
 from devbench.client import ModTool
+from devbench.games.fallout4 import ANY_CELL
 from devbench.vr import Handedness, check_handedness
 
 # the games devbench runs in, as find_port and require name them
@@ -50,7 +51,9 @@ class Config:
     """
     What a mod's suite needs: the game (and VR), the mod's devbench tool with the actions its tests call and the
     checkout's version, the files a run changes ((root, glob) pairs, backed up for the run), the mod's log, the report's
-    areas by test-file name in run order (a title, or an Area with its marker), and the cell the game runs in. tool
+    areas by test-file name in run order (a title, or an Area with its marker), and the cell the game runs in. cell is
+    where a game started from the main menu goes; a game already loaded is reused when the player is in cell or one of
+    cells (a sequence of editor IDs), or whatever its cell with cells=ANY_CELL (that can reach a save). tool
     None skips the mod check. picture is the render target dumped when a test fails (None: no picture); report_dir
     holds the run folders of the report (relative: to the DEVBENCH conftest's folder; None: build/e2e under the first
     folder up from it with a .git).
@@ -69,6 +72,7 @@ class Config:
     areas: Mapping[str, str | Area] = field(default_factory=dict)
     title: str | None = None
     cell: str = "QASmoke"
+    cells: Sequence[str] | str | None = None
     picture: int | None = None
     report_dir: str | os.PathLike[str] | None = None
     handedness: Handedness | None = None
@@ -81,6 +85,8 @@ class Config:
             raise ValueError("ready needs tool: it is a condition on the mod's tool")
         if self.game not in _GAMES:
             raise ValueError(f"unknown game {self.game!r}: expected 'skyrim' or 'fallout4'")
+        if isinstance(self.cells, str) and self.cells != ANY_CELL:
+            raise ValueError(f"cells {self.cells!r} is neither a sequence of cells nor ANY_CELL")
         if self.handedness is not None:
             check_handedness(self.handedness)
             if not self.vr:

@@ -24,6 +24,9 @@ from devbench.waits import wait_until
 # the wait after each answered message box, as close_dialogs takes it, when the poll interval is longer
 _DIALOG_PAUSE = 0.5
 
+# enter_game's cells for a game that runs in whatever cell is loaded
+ANY_CELL = "any"
+
 
 @dataclass(frozen=True)
 class Settled:
@@ -39,13 +42,16 @@ class Settled:
 @dataclass(frozen=True)
 class Entered:
     """
-    What enter_game did: started is False when it reused a game already in the cell; dialogs holds every dialog it
-    closed; quiet is the settle's outcome after a start, None on a reuse (nothing was settled).
+    What enter_game did: started is False when it reused a game already loaded; dialogs holds every dialog it
+    closed; quiet is the settle's outcome after a start, None on a reuse (nothing was settled). cell is the cell the
+    game is in: the start cell after a start, the accepted cell it matched on a reuse, None on a reuse under ANY_CELL
+    (the cell was not looked at).
     """
 
     started: bool
     dialogs: list[str]
     quiet: bool | None
+    cell: str | None = None
 
 
 def at_main_menu_or_in_game(menus: Sequence[str]) -> bool:
@@ -59,6 +65,16 @@ def at_main_menu_or_in_game(menus: Sequence[str]) -> bool:
 def _player_in(bench: Devbench, cell: str) -> bool:
     """Whether the console's GetInCell says the player is in the cell (by its editor ID)."""
     return int(console_number(bench, f"player.GetInCell {cell}")) == 1
+
+
+def _as_cells(cells: Sequence[str] | str | None) -> Sequence[str]:
+    """
+    The accepted cells as a list: None is none, and a bare cell name is one cell, not its letters. ANY_CELL is
+    handled before, so a string that reaches here is a cell's editor ID.
+    """
+    if cells is None:
+        return []
+    return [cells] if isinstance(cells, str) else cells
 
 
 def in_cell(bench: Devbench, cell: str) -> bool:
@@ -100,11 +116,14 @@ def enter_game(
     quiet: float = 10,
     limit: float = 120,
     interval: float = 1.0,
+    cells: Sequence[str] | str | None = None,
 ) -> Entered:
     """
     A game in the cell, so nothing a test does reaches a save. From the main menu: coc to it, wait up to timeout
-    seconds for the HUD with no MainMenu or LoadingMenu, then settle (quiet, limit). A game already in the cell is
-    reused; another loaded game, or none (mid-load), raises RequirementError. Dialogs are answered throughout.
+    seconds for the HUD with no MainMenu or LoadingMenu, then settle (quiet, limit). A game already loaded is reused
+    when the player is in the cell or in one of cells (None: the cell only); cells=ANY_CELL reuses it whatever its
+    cell, which also lets a run reach a save. Another loaded game, or none (mid-load), raises RequirementError.
+    Dialogs are answered throughout.
     """
     pause = min(_DIALOG_PAUSE, interval)
     menus = open_menus(bench)
@@ -115,11 +134,16 @@ def enter_game(
                 f"the game is neither at the main menu nor in a game (open menus: {menus}): "
                 "wait for the load to end, or quit to the main menu"
             )
-        if not _player_in(bench, cell):
-            raise RequirementError(
-                f"a game outside {cell} is loaded: quit to the main menu, and a new game is started in {cell}"
-            )
-        return Entered(False, close_dialogs(bench, pause=pause), None)
+        found: str | None = None
+        if cells != ANY_CELL:
+            accepted = [cell, *(name for name in _as_cells(cells) if name != cell)]
+            found = next((name for name in accepted if _player_in(bench, name)), None)
+            if found is None:
+                where = cell if len(accepted) == 1 else "any of " + ", ".join(accepted)
+                raise RequirementError(
+                    f"a game outside {where} is loaded: quit to the main menu, and a new game is started in {cell}"
+                )
+        return Entered(False, close_dialogs(bench, pause=pause), None, found)
 
     # a coc behind a modal does nothing, so a mod's popup at the main menu is answered first
     dialogs = close_dialogs(bench, pause=pause)
@@ -140,7 +164,7 @@ def enter_game(
     # gone and the HUD is up
     wait_until(in_game, timeout, interval=interval, what=f"the game in {cell}")
     settled = settle(bench, quiet=quiet, limit=limit, interval=interval)
-    return Entered(True, dialogs + settled.dialogs, settled.quiet)
+    return Entered(True, dialogs + settled.dialogs, settled.quiet, cell)
 
 
 def item_count(bench: Devbench, form: str) -> int:

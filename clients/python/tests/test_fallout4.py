@@ -6,6 +6,7 @@ import pytest
 
 from devbench import DevbenchError, RequirementError
 from devbench.games.fallout4 import (
+    ANY_CELL,
     Entered,
     Settled,
     at_main_menu_or_in_game,
@@ -113,7 +114,7 @@ def test_enter_game_from_the_main_menu_starts_one_in_the_cell(fake, bench):
 
     entered = enter_game(bench, quiet=0.05, **FAST)
 
-    assert entered == Entered(started=True, dialogs=["Mod installed"], quiet=True)
+    assert entered == Entered(started=True, dialogs=["Mod installed"], quiet=True, cell="QASmoke")
     assert game.commands == ["coc QASmoke"]
     assert game.cell == "QASmoke"
 
@@ -149,8 +150,51 @@ def test_enter_game_reuses_a_game_in_the_cell(fake, bench):
 
     entered = enter_game(bench, **FAST)
 
-    assert entered == Entered(started=False, dialogs=["Hello"], quiet=None)
+    assert entered == Entered(started=False, dialogs=["Hello"], quiet=None, cell="QASmoke")
     assert game.commands == ["player.GetInCell QASmoke"]
+
+
+def test_enter_game_reuses_a_game_in_one_of_the_accepted_cells(fake, bench):
+    game = FakeGame(menus=["HUDMenu"], cell="CTest")
+    game.install(fake)
+
+    entered = enter_game(bench, cells=["Other", "CTest"], **FAST)
+
+    assert entered == Entered(started=False, dialogs=[], quiet=None, cell="CTest")
+    assert game.commands == ["player.GetInCell QASmoke", "player.GetInCell Other", "player.GetInCell CTest"]
+
+
+def test_enter_game_takes_a_bare_cell_name_as_one_cell(fake, bench):
+    FakeGame(menus=["HUDMenu"], cell="CTest").install(fake)
+
+    assert enter_game(bench, cells="CTest", **FAST).cell == "CTest"
+
+
+def test_enter_game_reuses_a_game_in_any_cell(fake, bench):
+    game = FakeGame(menus=["HUDMenu"], cell="SanctuaryExt", boxes=["Hello"])
+    game.install(fake)
+
+    entered = enter_game(bench, cells=ANY_CELL, **FAST)
+
+    assert entered == Entered(started=False, dialogs=["Hello"], quiet=None, cell=None)
+    assert game.commands == []
+
+
+def test_enter_game_from_the_main_menu_starts_in_the_cell_whatever_cells_says(fake, bench):
+    game = FakeGame()
+    game.install(fake)
+
+    entered = enter_game(bench, cell="CTest", cells=ANY_CELL, quiet=0.05, **FAST)
+
+    assert entered.started and entered.cell == "CTest"
+    assert game.commands == ["coc CTest"]
+
+
+def test_enter_game_names_the_accepted_cells_when_it_refuses(fake, bench):
+    FakeGame(menus=["HUDMenu"], cell="SanctuaryExt").install(fake)
+
+    with pytest.raises(RequirementError, match="outside any of QASmoke, CTest is loaded"):
+        enter_game(bench, cells=["CTest"], **FAST)
 
 
 def test_enter_game_refuses_a_game_in_another_cell(fake, bench):

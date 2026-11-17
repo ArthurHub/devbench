@@ -7,7 +7,7 @@ import os
 import socket
 import time
 import types
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Any, NoReturn
@@ -57,8 +57,8 @@ _READY_INTERVAL = 0.1
 _PICTURE_SIZE = 2048
 
 # the game setup of each game: enter a game the tests can run in, and say what was done
-_ENTER: dict[str, Callable[[Devbench, str], fallout4.Entered]] = {
-    "fallout4": lambda bench, cell: fallout4.enter_game(bench, cell),
+_ENTER: dict[str, Callable[[Devbench, str, Sequence[str] | str | None], fallout4.Entered]] = {
+    "fallout4": lambda bench, cell, cells: fallout4.enter_game(bench, cell, cells=cells),
 }
 
 
@@ -514,12 +514,14 @@ def game(bench: Devbench, pytestconfig: pytest.Config) -> Iterator[Devbench]:
     enter = _ENTER.get(devbench.game)
     if enter is None:
         _exit(f"devbench.testing has no game setup for {devbench.game}")
-    entered = _setup_step(f"entering the game in {devbench.cell}", lambda: enter(bench, devbench.cell))
+    entered = _setup_step(f"entering the game in {devbench.cell}", lambda: enter(bench, devbench.cell, devbench.cells))
     record.dialogs.extend(entered.dialogs)
     if entered.started:
-        record.note(f"Started a new game in {devbench.cell} from the main menu.")
+        record.note(f"Started a new game in {entered.cell} from the main menu.")
+    elif entered.cell is None:
+        record.note("Ran in the game already loaded.")
     else:
-        record.note(f"Ran in the game already in {devbench.cell}.")
+        record.note(f"Ran in the game already in {entered.cell}.")
     if entered.quiet is False:
         record.note("The game still popped up dialogs at the settle limit: the tests started anyway.")
 

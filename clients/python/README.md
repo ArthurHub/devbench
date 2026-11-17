@@ -178,7 +178,7 @@ Put Fallout 4 (or VR) in a test cell, so nothing a run does reaches a save:
 ```python
 from devbench.games import fallout4
 
-entered = fallout4.enter_game(bench)  # cell="QASmoke"; Entered(started, dialogs, quiet)
+entered = fallout4.enter_game(bench)  # cell="QASmoke"; Entered(started, dialogs, quiet, cell)
 fallout4.in_cell(bench, "QASmoke")  # False at the main menu
 fallout4.settle(bench, quiet=10, limit=120)  # Settled(dialogs, quiet)
 ```
@@ -186,7 +186,10 @@ fallout4.settle(bench, quiet=10, limit=120)  # Settled(dialogs, quiet)
 From the main menu `enter_game` runs `coc <cell>`, waits up to `timeout` (300 s) for the HUD with no main menu or
 loading screen, then settles: it waits until no message box has popped up for `quiet` seconds, answering each with its
 first button, and gives up after `limit` seconds with `quiet` False. A game already in the cell is reused
-(`started` False, `quiet` None); a game in another cell, or a load in progress, raises `RequirementError`. A `coc`
+(`started` False, `quiet` None); a game in another cell, or a load in progress, raises `RequirementError`. A suite
+that needs no particular cell passes `cells`: a game already in the cell or in one of `cells` is reused (`Entered.cell`
+says which), and `cells=fallout4.ANY_CELL` reuses a loaded game whatever its cell, which can reach a save. `cell` is
+still where a game started from the main menu goes. A `coc`
 that a modal blocked raises `DevbenchError`. The cell is an interior cell's editor ID; an unknown one raises
 `DevbenchError`. Nothing is printed: `dialogs` holds what each closed box said.
 
@@ -262,7 +265,8 @@ DEVBENCH = devbench.testing.Config(
     ready=lambda mod: mod.call("state")["ready"],  # polled on the mod's tool before the first test
     ready_timeout=30.0,
     title="Immersive Flashlight VR",
-    cell="QASmoke",  # the interior cell the game runs in
+    cell="QASmoke",  # the interior cell a game started from the main menu goes to
+    cells=None,  # more cells a loaded game may be in: ["CTest"], or fallout4.ANY_CELL for whatever cell it is in
     picture=6,  # the render target dumped when a test fails (FO4VR: 6, the lit frame); None: no picture
     report_dir=None,  # where the report's run folders go; None: build/e2e under the repo root
     handedness="right",  # VR: "left" / "right" for the run, the player's put back after; None: leave it
@@ -281,13 +285,13 @@ Fixtures:
 | `handedness` (session) | the run's handedness (`"left"` / `"right"`): what `game` set, else the game's own                           |
 | `report` (session)     | the run's record, which the HTML report renders (below)                                                     |
 
-`game` puts back a backup a crashed run left, runs `enter_game(cell)`, checks the mod (`require_tools`, then
+`game` puts back a backup a crashed run left, runs `enter_game(cell, cells=cells)`, checks the mod (`require_tools`, then
 `require_actions`, then `require_version`) and each of `requires` (`require_tools`, its `actions`, then
 `require_min_version`, which compares dotted numbers: `0.79.2-beta` is 0.79.2), polls `ready` with the mod's `ModTool`
 until it returns a true value, puts back a handedness a crashed run left, takes the backup into `.backup/` beside the
 conftest, sets the run's handedness, and sets the log mark. The report notes each version it checked.
 A setup failure (another game, a missing tool or action, another build, a required mod too old, a mod not ready
-within `ready_timeout`, a game outside the cell) exits the run with code 2 and the message that says what to do.
+within `ready_timeout`, a game outside the accepted cells) exits the run with code 2 and the message that says what to do.
 
 Tests run in `areas` order; files it does not list run last. An `Area`'s marker is registered (it passes
 `--strict-markers` and shows in `--markers`) and put on every test of its file, so `pytest -m light` runs that area

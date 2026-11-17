@@ -132,6 +132,13 @@ def test_config_rejects_an_unknown_game():
         Config(game="starfield", vr=False)
 
 
+def test_config_rejects_a_bare_cell_name_for_cells():
+    with pytest.raises(ValueError, match="neither a sequence of cells nor ANY_CELL"):
+        Config(game="fallout4", vr=True, cells="CTest")
+    Config(game="fallout4", vr=True, cells="any")
+    Config(game="fallout4", vr=True, cells=["CTest"])
+
+
 def test_config_calls_a_version_callable():
     assert Config(game="fallout4", vr=True, version=lambda: "1.2.3").expected_version() == "1.2.3"
     assert Config(game="fallout4", vr=True).expected_version() is None
