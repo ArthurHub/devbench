@@ -884,9 +884,11 @@ namespace dvb
 			"retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay "
 			"may explicitly survive the load/new-game events it is reproducing. Poses only ever come from a whole "
 			"tracked-set frame, so they cannot come from different clocks; the one per-controller action is press. "
-			"device='vrTrackedSet' action='press' (hand, buttons, durationMs default 100, delayMs) holds named buttons on one controller "
+			"device='vrTrackedSet' action='press' (hand, buttons and / or stick, durationMs default 100, delayMs) holds named buttons on one controller "
 			"for durationMs on top of the active sequence or reach hold, as its owner (409 otherwise); trigger and grip also "
-			"drive their analog axis to 1.0, and the controller packet number moves on at press start and end. It ends with "
+			"drive their analog axis to 1.0, and the controller packet number moves on at press start and end. stick [x, y] "
+			"(-1..1, y up) pushes that controller's thumbstick and lets it back to center when the press ends. Each hand has "
+			"its own press, so presses on both hands overlap; a new press on a hand replaces its last. It ends with "
 			"the sequence. capabilities.vrTrackedSet.pressButtons lists the names. "
 			"device='mouse': 'move' (x, y in game-window client pixels) sets the engine's menu cursor "
 			"and, with focusWindow=true, brings the game window to the foreground and sets the OS cursor so overlays that read it "
@@ -913,7 +915,7 @@ namespace dvb
 								{ "focusWindow", json{ { "type", "boolean" }, { "description", "mouse move: bring the game window to the foreground and set the OS cursor too (default false)" } } },
 								{ "key", json{ { "oneOf", json::array({ json{ { "type", "string" } }, json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 258 } } }) }, { "description", "down/up/tap: documented key name, raw DirectInput scancode (1-255), or mouse button code (256-258 = mouseLeft / mouseRight / mouseMiddle)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
-								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "keyboard: tap duration (default 50, max 5000); sequence tap/wait event duration. vrTrackedSet press: how long the buttons stay down (default 100)" } } },
+								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 10000 }, { "description", "keyboard: tap duration (default 50, max 5000); sequence tap/wait event duration. vrTrackedSet press: how long the buttons / stick stay held (default 100)" } } },
 								{ "maxHoldMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", kMaximumMaxHoldMs }, { "description", "down safety lease (default 5000); automatic up at expiry" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "internal cleanup only; external true is rejected" } } },
 								{ "all", json{ { "type", "boolean" }, { "description", "internal cleanup only; external true is rejected" } } },
@@ -923,7 +925,8 @@ namespace dvb
 								{ "controlToken", json{ { "type", "string" }, { "description", "vrTrackedSet stop/releaseAll: opaque token returned by sequence start. sequence: the running sequence's token replaces its frames in place" } } },
 								{ "surviveLifecycle", json{ { "type", "boolean" }, { "description", "internal recording replay only; external true is rejected" } } },
 								{ "hand", json{ { "type", "string" }, { "enum", json::array({ "left", "right" }) }, { "description", "press: the physical controller" } } },
-								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click)" } } },
+								{ "buttons", json{ { "type", "array" }, { "minItems", 1 }, { "items", json{ { "type", "string" }, { "enum", json::array({ "trigger", "grip", "a", "b", "thumbstick" }) } } }, { "description", "press: buttons held together (trigger, grip, a = A/X, b = B/Y, thumbstick = click); optional with stick" } } },
+								{ "stick", json{ { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 }, { "items", json{ { "type", "number" }, { "minimum", -1 }, { "maximum", 1 } } }, { "description", "press: thumbstick deflection [x, y] held for durationMs (x right, y up), then back to center; touches the stick, does not click it" } } },
 								{ "delayMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", 30000 }, { "description", "press: wait this long before pressing (default 0)" } } },
 								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,root?,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; root 'firstPerson' searches the first-person 3D instead of the body ('player', default); at least one hand" } } },
 								{ "calibrate", json{ { "type", "string" }, { "enum", json::array({ "auto", "always" }) }, { "description", "reach: 'auto' (default) reuses a hand's calibration while the player's yaw is unchanged; 'always' measures it again" } } },

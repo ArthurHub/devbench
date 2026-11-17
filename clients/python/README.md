@@ -147,6 +147,7 @@ if hands.ready():  # the vrTrackedSet capability: OpenVR found, hooks in place
         hands.head("down")  # "ready", "down" or {pitch?, yaw?, lookAt?, ...}
         hands.tap("left")  # press("left", ["trigger"], 100); returns once released
         hands.long_press("right", ["grip"])  # 1000 ms
+        hands.stick("primary", 0, -1, 600)  # thumbstick down 600 ms, back to center; the pose stays
         hands.rest()  # hands and head back in the ready pose
         hands.pose(hands={"right": {"node": "LArm_Hand", "front": 10}})  # any other pose arguments
 ```

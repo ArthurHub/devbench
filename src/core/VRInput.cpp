@@ -398,6 +398,8 @@ namespace dvb
 			/**
 			 * Lays a `press` over the active sequence for one hand. Only the sequence's owner may
 			 * press, and the press ends with that sequence even if its duration has not run out.
+			 * Each hand has its own slot: presses on both hands overlap, a second on one hand
+			 * replaces its first.
 			 */
 			json Press(const json& a_args, const std::string& a_owner)
 			{
@@ -421,6 +423,8 @@ namespace dvb
 					{ "hand", request.right ? "right" : "left" }, { "buttons", request.buttons },
 					{ "delayMs", request.delayMs }, { "durationMs", request.durationMs },
 					{ "sequenceRemainingMs", remainingMs } };
+				if (request.stick)
+					result["stick"] = *request.stick;
 				m_presses[slot] = ActivePress{ std::move(request), m_transaction.Generation(),
 					now + milliseconds(result["delayMs"].get<std::int64_t>()),
 					now + milliseconds(result["delayMs"].get<std::int64_t>() + result["durationMs"].get<std::int64_t>()) };
@@ -1063,6 +1067,7 @@ namespace dvb
 			{ "injection", "OpenVR IVRCompositor poses + IVRSystem controller state" },
 			{ "actions", std::move(actions) },
 			{ "pressButtons", VRPressButtonsJson() },
+			{ "pressStick", "stick [x, y] in [-1, 1] drives axis 0 (the thumbstick) and touches it for the press" },
 			{ "timing", "steadyMillisecondsFromSequenceStart" },
 			{ "ordering", "tMs then seq" },
 			{ "poseEncoding", "OpenVR device-to-absolute 3x4 row-major" },

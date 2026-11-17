@@ -209,6 +209,26 @@ def test_press_waits_until_the_buttons_are_released(bench, tool, slept):
     assert slept == [pytest.approx(0.35)]
 
 
+def test_stick_pushes_the_thumbstick_and_waits_until_it_is_back(bench, tool, slept):
+    Hands(bench, "e2e").stick("primary", 0, -1, 600)
+
+    assert tool.calls[-1] == {
+        "action": "press",
+        "owner": "e2e",
+        "hand": "primary",
+        "stick": [0.0, -1.0],
+        "durationMs": 600,
+    }
+    assert slept == [pytest.approx(0.7)]
+
+
+def test_stick_rejects_an_unknown_hand(bench, tool, slept):
+    with pytest.raises(ValueError, match="left, right, primary, offhand"):
+        Hands(bench, "e2e").stick("both", 1, 0)
+
+    assert tool.calls == []
+
+
 def test_tap_and_long_press_use_the_framework_thresholds(bench, tool, slept):
     hands = Hands(bench, "e2e")
 

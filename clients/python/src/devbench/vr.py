@@ -186,6 +186,18 @@ class Hands:
         )
         time.sleep(duration_ms / 1000 + _RELEASE_MARGIN)
 
+    def stick(self, hand: str, x: float, y: float, duration_ms: int = TAP_MS) -> None:
+        """
+        Push a hand's (left / right / primary / offhand) thumbstick to x, y (each -1..1; x right, y up) for duration_ms
+        on top of the hold, and return once it is back at center. The pose does not move, so a ray stays where it
+        points. Without a hold of this owner devbench answers 409 (DevbenchError).
+        """
+        _check_hand(hand)
+        self.bench.tool(
+            "input", action="press", owner=self.owner, hand=hand, stick=[float(x), float(y)], durationMs=duration_ms
+        )
+        time.sleep(duration_ms / 1000 + _RELEASE_MARGIN)
+
     def tap(self, hand: str, buttons: Sequence[str] = ("trigger",)) -> None:
         """A press short enough to count as a tap (TAP_MS)."""
         self.press(hand, buttons, TAP_MS)

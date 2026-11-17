@@ -255,6 +255,45 @@ TEST_CASE("press rejects a missing hand, unknown buttons and out-of-range timing
 	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "right" }, { "buttons", json::array({ "grip" }) }, { "delayMs", -1 } }));
 }
 
+TEST_CASE("press takes a stick alone or with buttons, on axis 0 with the stick touched")
+{
+	const auto stick = dvb::ParseVRPress(json{ { "hand", "right" }, { "stick", json::array({ 0.0, -1.0 }) } });
+	CHECK(stick.right);
+	CHECK(stick.stick.has_value());
+	CHECK(stick.pressed == 0);
+	CHECK(stick.touched == (1ull << 32));
+	CHECK(std::abs(*stick.axes[0]) <= 1e-6f);
+	CHECK(std::abs(*stick.axes[1] + 1.0f) <= 1e-6f);
+	CHECK(stick.buttons.empty());
+
+	const auto both = dvb::ParseVRPress(json{ { "hand", "left" }, { "buttons", json::array({ "trigger" }) }, { "stick", json::array({ 0.5, 0 }) } });
+	CHECK(both.pressed == (1ull << 33));
+	CHECK(both.touched == ((1ull << 33) | (1ull << 32)));
+	CHECK(std::abs(*both.axes[0] - 0.5f) <= 1e-6f);
+	CHECK(std::abs(*both.axes[2] - 1.0f) <= 1e-6f);
+}
+
+TEST_CASE("press rejects a stick outside [-1, 1], a malformed stick and neither buttons nor stick")
+{
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "left" } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "left" }, { "stick", json::array({ 1.5, 0 }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "left" }, { "stick", json::array({ 0 }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "left" }, { "stick", json::array({ "up", 0 }) } }));
+	CHECK_THROWS(dvb::ParseVRPress(json{ { "hand", "left" }, { "stick", json::array({ 0, 1 }) }, { "buttons", json::array() } }));
+}
+
+TEST_CASE("a stick press replaces the frame's stick and leaves its other axes")
+{
+	dvb::VRControllerState state;
+	state.axes[0] = 0.3f;
+	state.axes[2] = 0.7f;
+	const auto out = dvb::ApplyVRPress(state, dvb::ParseVRPress(json{ { "hand", "left" }, { "stick", json::array({ -1, 0.25 }) } }));
+	CHECK(std::abs(out.axes[0] + 1.0f) <= 1e-6f);
+	CHECK(std::abs(out.axes[1] - 0.25f) <= 1e-6f);
+	CHECK(std::abs(out.axes[2] - 0.7f) <= 1e-6f);
+	CHECK(out.pressed == 0);
+}
+
 TEST_CASE("press lays its state over the frame's controller state")
 {
 	dvb::VRControllerState state;

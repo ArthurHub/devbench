@@ -436,6 +436,11 @@ irm $i -Method Post -ContentType application/json -Body '{"action":"press","owne
   so chained moves never hand the devices back to the physical controllers in between.
 - **`press`** holds `trigger`, `grip`, `a`, `b` or `thumbstick` on one hand over the active
   sequence (or pose hold), as its owner; trigger and grip also drive their axis to 1.0.
+  `stick: [x, y]` (−1..1, x right, y up), alone or with buttons, pushes that hand's
+  thumbstick (axis 0, touched, not clicked) for `durationMs`, then lets it back to center;
+  the poses do not move, so a ray stays where the pose put it. Each hand has its own press:
+  presses on both hands overlap (both sticks clicked together is two calls), and a new
+  press on a hand replaces the one it holds.
 - **`pose`** places the hands at the player's nodes or at world points, and turns the head,
   in about a second: see below. A node is a VR node slot as `nodes` names it (`hmdNode`,
   `uprightHmdNode`, …), else the first-person skeleton, else the body skeleton; a hand's
@@ -593,6 +598,14 @@ HMD node's forward row:
   axes their offsets from the point were (−12.00, 4.99, −4.00) and (12.00, 5.00, −4.00);
 - the answer's tracking yaws were −25 and +25, and both wands turned toward the body, at
   exactly ±25° from the body's forward (the fitted turn, 11.68°) and up by sin 20°.
+
+`press` with `stick`, checked live on FO4VR (2026-11-17, FRIK, QASmoke) over a ready-pose hold:
+
+- the left stick at `[0, 1]` for 1.5 s walked the player 215 units along its heading;
+- the right stick at `[1, 0]` for 0.3 s snap-turned the player 30°;
+- a later `pose` answered both hands at the same tracking positions as before the pushes;
+- a press on each hand (`thumbstick`, 1.6 s and 1.5 s) answered within a millisecond of each
+  other, so they overlap. No in-game effect of the overlap was looked at.
 
 Checked live on FO4VR 1.2.72 (2026-11-10, FRIK, F4VR Common Framework and FO4VRTools
 installed). The `reach` runs are history: they are what showed the map is simpler, and
@@ -821,7 +834,7 @@ is on a worker thread in game, so devbench offers its queue through the C-ABI. S
   - **Skyrim was not re-run live after the VR input code moved to `src/core/`** (the Sequence
     manager and hooks are shared; Reach went back to Skyrim's platform code on 2026-11-11).
     Skyrim builds and its unit tests pass; its live path (hand bones, controller-index
-    remap, Reach) is untested since the move.
+    remap, Reach) is untested since the move, and `press` with `stick` was never run there.
   - **Controller indices are not remapped on Fallout.** Skyrim points the game at the
     frame's controller indices; on Fallout that seam is a no-op, so frames should carry the
     indices `observe` reports. Whether FO4VR caches indices so a frame with others is

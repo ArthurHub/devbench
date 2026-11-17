@@ -139,12 +139,14 @@ namespace dvb
 		std::int64_t                         delayMs = 0;
 		std::int64_t                         durationMs = kDefaultPressMs;
 		std::vector<std::string>             buttons;
+		std::optional<std::array<float, 2>>  stick;  // thumbstick x / y on axis 0, as asked
 	};
 
 	// The button names `press` accepts, each mapped to the OpenVR button (and axis) it drives.
 	json VRPressButtonsJson();
 
-	// Parse and validate `press` arguments. Throws std::invalid_argument naming the bad field.
+	// Parse and validate `press` arguments: buttons, a stick deflection, or both. Throws
+	// std::invalid_argument naming the bad field.
 	VRPressRequest ParseVRPress(const json& a_args);
 
 	// The frame's controller state with the press laid over it: button and touch bits OR-ed in,

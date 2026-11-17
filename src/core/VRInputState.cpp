@@ -360,6 +360,9 @@ namespace dvb
 
 	namespace
 	{
+		// k_EButton_SteamVR_Touchpad: the thumbstick's click bit, and its touch bit while deflected
+		constexpr int kThumbstickBit = 32;
+
 		struct PressButton
 		{
 			const char* name;
@@ -374,7 +377,7 @@ namespace dvb
 			{ "grip", 2, 2, "k_EButton_Grip; axis 2 x = 1.0" },
 			{ "a", 7, -1, "k_EButton_A (A / X)" },
 			{ "b", 1, -1, "k_EButton_ApplicationMenu (B / Y)" },
-			{ "thumbstick", 32, -1, "k_EButton_SteamVR_Touchpad (stick or touchpad click)" },
+			{ "thumbstick", kThumbstickBit, -1, "k_EButton_SteamVR_Touchpad (stick or touchpad click)" },
 		};
 	}
 
@@ -386,6 +389,11 @@ namespace dvb
 		return out;
 	}
 
+	/**
+	 * Reads one press. 'stick' [x, y] (each -1..1, y up) deflects the thumbstick on axis 0 and
+	 * touches it, the way a thumb resting on it does; it does not click it ('thumbstick' in
+	 * buttons does). A press needs buttons, a stick, or both.
+	 */
 	VRPressRequest ParseVRPress(const json& a_args)
 	{
 		VRPressRequest press;
@@ -396,9 +404,22 @@ namespace dvb
 			throw std::invalid_argument(std::format("'hand' must be 'left' or 'right', not '{}'", hand));
 		press.right = hand == "right";
 
-		if (!a_args.contains("buttons") || !a_args["buttons"].is_array() || a_args["buttons"].empty())
-			throw std::invalid_argument("press requires 'buttons', a non-empty array of button names");
-		for (const auto& item : a_args["buttons"]) {
+		if (a_args.contains("stick")) {
+			const auto stick = FloatArray<2>(a_args, "stick");
+			if (std::abs(stick[0]) > 1.0f || std::abs(stick[1]) > 1.0f)
+				throw std::invalid_argument("'stick' must be [x, y] with each in [-1, 1]");
+			press.stick = stick;
+			press.axes[0] = stick[0];
+			press.axes[1] = stick[1];
+			press.touched |= 1ull << kThumbstickBit;
+		}
+
+		if (!a_args.contains("buttons")) {
+			if (!press.stick)
+				throw std::invalid_argument("press requires 'buttons' (a non-empty array of button names), 'stick' ([x, y]), or both");
+		} else if (!a_args["buttons"].is_array() || a_args["buttons"].empty())
+			throw std::invalid_argument("'buttons' must be a non-empty array of button names");
+		for (const auto& item : a_args.value("buttons", json::array())) {
 			if (!item.is_string())
 				throw std::invalid_argument("'buttons' must contain button names");
 			const auto  name = item.get<std::string>();
