@@ -497,7 +497,11 @@ def test_a_conftest_without_devbench_is_a_usage_error(pytester):
     result.stderr.fnmatch_lines(["*no conftest defines DEVBENCH*"])
 
 
-def test_mod_and_log_mark_need_their_config_fields(pytester, fake, game):
+@pytest.mark.parametrize(
+    ("fixture", "message"),
+    [("mod", "*the mod fixture needs Config.tool*"), ("log_mark", "*the log_mark fixture needs Config.log*")],
+)
+def test_mod_and_log_mark_without_their_config_fields_are_usage_errors(pytester, fake, game, fixture, message):
     pytester.makeconftest(
         """
         import devbench.testing
@@ -507,17 +511,33 @@ def test_mod_and_log_mark_need_their_config_fields(pytester, fake, game):
         """
     )
     pytester.makepyfile(
-        test_light="""
-        def test_mod(mod): pass
-        def test_log_mark(log_mark): pass
+        test_light=f"""
         def test_events(events): assert events.prefix is None
+        def test_needs({fixture}): pass
         """
     )
 
     result = pytester.runpytest("--devbench-port", str(fake.port))
 
-    result.assert_outcomes(passed=1, errors=2)
-    result.stdout.fnmatch_lines(["*the mod fixture needs Config.tool*", "*the log_mark fixture needs Config.log*"])
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines([message + "test_light.py::test_needs*"])
+    result.assert_outcomes()
+
+
+def test_events_without_config_tool_has_no_prefix(pytester, fake, game):
+    pytester.makeconftest(
+        """
+        import devbench.testing
+
+        pytest_plugins = ["devbench.testing"]
+        DEVBENCH = devbench.testing.Config(game="fallout4", vr=True)
+        """
+    )
+    pytester.makepyfile(test_light="def test_events(events): assert events.prefix is None")
+
+    result = pytester.runpytest("--devbench-port", str(fake.port))
+
+    result.assert_outcomes(passed=1)
 
 
 def test_a_mod_wraps_the_game_fixture(pytester, fake, game):

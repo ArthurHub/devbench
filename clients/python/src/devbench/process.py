@@ -45,6 +45,17 @@ _READY: dict[str, Callable[[Sequence[str]], bool]] = {
 }
 
 
+def _accepts(port: int) -> bool:
+    """
+    Whether something accepts a connection on the port now, whatever it then does with it.
+    """
+    try:
+        socket.create_connection((HOST, port), timeout=_CONNECT_TIMEOUT).close()
+    except OSError:
+        return False
+    return True
+
+
 def _probe(port: int) -> tuple[bool, Any]:
     """
     Whether something still holds the port, and what it said: the health answer, or why there was none. A connect
@@ -295,8 +306,9 @@ def launch(
     DevbenchError.
     """
     held = port or find_port(game, vr)
-    answers, said = _probe(held)
-    if answers:
+    # a plain connect, not _probe: a game that accepts and drops the health call still holds the port
+    if _accepts(held):
+        _, said = _probe(held)
         raise DevbenchError(
             f"a game may already run: port {held} accepts connections ({said}): quit it, or use it", answer=said
         )

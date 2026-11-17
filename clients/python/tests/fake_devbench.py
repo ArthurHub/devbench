@@ -17,7 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 # sent as is, as text/plain, to stand for a body that is not JSON.
 ToolHandler = Callable[[dict[str, Any]], Any]
 
-# A tool handler returning this closes the connection without answering, as a game dying mid-call does.
+# A tool handler returning this, or health set to it, closes the connection without answering, as a game dying
+# mid-call does.
 HANG_UP = object()
 
 
@@ -106,7 +107,10 @@ class _Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         self.fake._record("GET", self.path, None)
         if url.path == "/api/health":
-            self._answer(self.fake.health)
+            if self.fake.health is HANG_UP:
+                self.close_connection = True
+            else:
+                self._answer(self.fake.health)
         elif url.path == "/api/tools":
             names = sorted(self.fake.tools)
             self._answer({"tools": [{"name": name, "description": "", "inputSchema": {}} for name in names]})

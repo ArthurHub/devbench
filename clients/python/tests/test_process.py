@@ -183,6 +183,17 @@ def test_launch_refuses_while_a_game_holds_the_port(launching, fake):
     assert not marker.exists()
 
 
+def test_launch_refuses_while_a_game_accepts_and_drops_the_connection(launching, fake):
+    launching.name_port(fake.port)
+    fake.health = HANG_UP
+    marker = launching.folder / "launched"
+
+    with pytest.raises(DevbenchError, match=f"a game may already run: port {fake.port}"):
+        launch([sys.executable, "-c", f"open(r'{marker}', 'w')"], "fallout4", True, timeout=5)
+
+    assert not marker.exists()
+
+
 def test_launch_reports_a_command_that_cannot_start(launching):
     with pytest.raises(DevbenchError, match="could not start"):
         launch([str(launching.folder / "no-such-launcher.exe")], "fallout4", True, timeout=5)

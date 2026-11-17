@@ -410,9 +410,17 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """
     Mark each test with its area's marker, and run the tests in the order of Config.areas (by test-file name); files
-    it does not list run last. It runs first, so pytest's -m sees the markers.
+    it does not list run last. It runs first, so pytest's -m sees the markers. A test that uses mod without
+    Config.tool, or log_mark without Config.log, raises pytest.UsageError before any test runs.
     """
     devbench = _run(config).config
+    needs = {"mod": ("tool", devbench.tool), "log_mark": ("log", devbench.log)}
+    for name, (field_name, value) in needs.items():
+        users = [item.nodeid for item in items if value is None and name in getattr(item, "fixturenames", ())]
+        if users:
+            raise pytest.UsageError(
+                f"devbench.testing: the {name} fixture needs Config.{field_name}, used by: {', '.join(users)}"
+            )
     markers = devbench.area_markers()
     for item in items:
         area = markers.get(item.path.name)
