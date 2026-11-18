@@ -91,7 +91,7 @@ only on its own repository's `main`.
    The tag's message becomes the release notes; a lightweight tag gets the commit subjects
    since the previous `fo4-v` tag instead.
 4. `release-fallout.yaml` checks the tag (`fo4-vX.Y.Z`, on `main`, X.Y.Z the `CMakeLists.txt`
-   version), builds with the `fallout4-vs2022` preset, checks the Python client resolves the
+   version), builds with the `fallout4-vs2026` preset, checks the Python client resolves the
    same version, and creates a **draft** GitHub Release. Review the draft and publish it.
 
 The archive, `devbench-fo4-vX.Y.Z.7z`, has `F4SE/` at its root so MO2 installs it as a mod:

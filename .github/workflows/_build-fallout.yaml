@@ -1,13 +1,13 @@
 # Reusable Fallout build: compiles devbench.dll for Fallout 4 / Fallout 4 VR
-# (one DLL for both) with the CMake fallout4-vs2022 preset, vcpkg and the extern/CommonLibF4 submodule, plus
+# (one DLL for both) with the CMake fallout4-vs2026 preset, vcpkg and the extern/CommonLibF4 submodule, plus
 # the standalone devbench-bridge.exe, uploading each as its own artifact. Called by release-fallout.yaml.
 #
 # A file of its own rather than a job in _build.yaml: _build.yaml is upstream's (Skyrim, xmake) and stays as
 # upstream has it, so merges never touch this file. The bridge job duplicates _build.yaml's for the same
 # reason; it is the same exe for every game.
 #
-# vs2022, not the local vs2026 preset: the windows-2025 image ships VS 2022 (v143) only. The plugin links
-# the static CRT, so the toolset makes no difference to the game.
+# The windows-2025 image ships VS 2026 (v145) only, so the build uses the same preset as a local build. The
+# plugin links the static CRT, so the toolset makes no difference to the game.
 name: "_build-fallout"
 
 on:
@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   build:
-    name: Build (CMake · fallout4-vs2022)
+    name: Build (CMake · fallout4-vs2026)
     runs-on: windows-2025
     env:
       VCPKG_ROOT: C:\vcpkg
@@ -76,17 +76,17 @@ jobs:
             vcpkg-fallout-${{ runner.os }}-
 
       - name: Configure
-        run: cmake --preset fallout4-vs2022
+        run: cmake --preset fallout4-vs2026
 
       - name: Build
-        run: cmake --build --preset fallout4-vs2022 --target devbench
+        run: cmake --build --preset fallout4-vs2026 --target devbench
 
       - name: Stage binaries
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
-          Copy-Item build/vs2022/Release/devbench.dll staging/
-          Copy-Item build/vs2022/Release/devbench.pdb staging/
+          Copy-Item build/vs2026/Release/devbench.dll staging/
+          Copy-Item build/vs2026/Release/devbench.pdb staging/
 
       - name: Upload binaries
         uses: actions/upload-artifact@v7

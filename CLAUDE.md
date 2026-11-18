@@ -17,7 +17,7 @@ Two build systems, one per game. `src/core/` is buildsystem-neutral and compiled
   ```
   Set `FalloutPluginTargets` (`;`-separated game `Data` dirs) to deploy on build.
 - **Fallout release**: pushing a `fo4-vX.Y.Z` tag on `main` runs `release-fallout.yaml` (CI build with the
-  `fallout4-vs2022` preset via `_build-fallout.yaml`, a draft GitHub Release with the F4SE archive). X.Y.Z must be
+  `fallout4-vs2026` preset via `_build-fallout.yaml`, a draft GitHub Release with the F4SE archive). X.Y.Z must be
   `CMakeLists.txt`'s version: a Fallout release never bumps it (it is `GetBuildNumber()` too), the prefix only keeps
   the tag apart from Skyrim's `vX.Y.Z`. Details in `docs/FALLOUT4.md` "Releasing". Upstream's `release.yaml` /
   `_build.yaml` are left as is.
